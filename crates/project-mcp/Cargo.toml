@@ -1,0 +1,23 @@
+[package]
+name = "project-mcp"
+description = "MCP adapter for Rust projects."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+project-core = { path = "../project-core", version = "=0.1.0" }
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+project-fs = { path = "../project-fs", version = "=0.1.0" }
+
+[lints]
+workspace = true

@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Rust Delivery Intake",
+      "trigger": "UserPromptSubmit",
+      "description": "Classifies non-trivial Rust work and directs the agent to the required specialist workflow.",
+      "action": {
+        "type": "agent",
+        "prompt": "For a non-trivial Rust Factory change (new brick, public API, adapter, dependency, concurrency, safety, or persistence change), first identify the affected crate(s), whether a GitHub issue tracks it or why none is needed, and the applicable gates in `.kiro/steering/rust-delivery-workflow.md`. Follow that sequence: context, rust-factory-sme approval, implementation, QA, security, final architecture approval, then `make check`. For a trivial documentation-only or mechanical rename, use the scaled-down workflow. Do not claim specialist approval without invoking the required reviewer."
+      }
+    }
+  ]
+}

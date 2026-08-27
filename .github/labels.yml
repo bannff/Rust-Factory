@@ -1,0 +1,67 @@
+labels:
+  - name: status/triage
+    color: "D4C5F9"
+    description: Awaiting initial assessment.
+  - name: status/ready
+    color: "0E8A16"
+    description: Refined and ready to be worked.
+  - name: status/in-progress
+    color: "1D76DB"
+    description: Actively being implemented.
+  - name: status/blocked
+    color: "B60205"
+    description: Cannot proceed without an external decision or dependency.
+  - name: status/review
+    color: "FBCA04"
+    description: Awaiting review or acceptance.
+  - name: type/feature
+    color: "A2EEEF"
+    description: New or expanded capability.
+  - name: type/bug
+    color: "D73A4A"
+    description: Defect or incorrect behavior.
+  - name: type/chore
+    color: "C5DEF5"
+    description: Maintenance, tooling, or operational work.
+  - name: type/docs
+    color: "0075CA"
+    description: Documentation change.
+  - name: type/security
+    color: "EE0701"
+    description: Security-related work.
+  - name: priority/critical
+    color: "B60205"
+    description: Immediate action required.
+  - name: priority/high
+    color: "D93F0B"
+    description: High-impact work.
+  - name: priority/medium
+    color: "FBCA04"
+    description: Normal planning priority.
+  - name: priority/low
+    color: "0E8A16"
+    description: Lower-impact work.
+  - name: area/factory-core
+    color: "5319E7"
+    description: Shared Factory primitives.
+  - name: area/project
+    color: "006B75"
+    description: Project blueprint, filesystem, or project MCP work.
+  - name: area/agent
+    color: "0052CC"
+    description: Agent definitions, runtime, or agent MCP work.
+  - name: area/workflow
+    color: "BFDADC"
+    description: Workflow lifecycle, memory, or workflow MCP work.
+  - name: area/evaluation
+    color: "F9D0C4"
+    description: Evaluation contracts and evidence.
+  - name: area/mcp
+    color: "C2E0C6"
+    description: MCP adapter or authoring-plane work.
+  - name: area/fs
+    color: "FEF2C0"
+    description: Filesystem confinement or materialization work.
+  - name: area/workspace
+    color: "E4E669"
+    description: Workspace-wide tooling, configuration, or governance.

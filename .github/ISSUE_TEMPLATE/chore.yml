@@ -1,0 +1,55 @@
+name: Chore
+description: Track bounded maintenance, tooling, or operational work.
+title: "[chore]: "
+labels:
+  - status/triage
+  - type/chore
+  - priority/medium
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: Describe the maintenance outcome and why it is needed.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable, testable conditions for completion.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Scope and impact
+      description: Describe affected automation, users, crates, or operational behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: rust_toolchain_scope
+    attributes:
+      label: Rust toolchain scope
+      options:
+        - No toolchain change
+        - Rust version or edition
+        - Cargo workspace or dependency
+        - Formatting, linting, or test tooling
+    validations:
+      required: true
+  - type: textarea
+    id: crate_scope
+    attributes:
+      label: Crate scope
+      description: List affected crate(s), module(s), or write "workspace only".
+    validations:
+      required: true
+  - type: checkboxes
+    id: api_adapter_scope
+    attributes:
+      label: API and adapter scope
+      options:
+        - label: Public Rust API or trait contract is affected.
+        - label: Core domain behavior is affected.
+        - label: An MCP, filesystem, storage, provider, or network adapter is affected.

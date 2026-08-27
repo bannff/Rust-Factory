@@ -1,0 +1,55 @@
+name: Feature request
+description: Propose a bounded Rust Factory capability or improvement.
+title: "[feature]: "
+labels:
+  - status/triage
+  - type/feature
+  - priority/medium
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: Describe the user or system outcome and the problem it solves.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable, testable conditions for completion.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries and non-goals
+      description: State what this change intentionally does not include.
+    validations:
+      required: true
+  - type: dropdown
+    id: rust_toolchain_scope
+    attributes:
+      label: Rust toolchain scope
+      options:
+        - No toolchain change
+        - Rust version or edition
+        - Cargo workspace or dependency
+        - Formatting, linting, or test tooling
+    validations:
+      required: true
+  - type: textarea
+    id: crate_scope
+    attributes:
+      label: Crate scope
+      description: Identify the core crate, adapter crate, or workspace area that owns this work.
+    validations:
+      required: true
+  - type: checkboxes
+    id: api_adapter_scope
+    attributes:
+      label: API and adapter scope
+      options:
+        - label: Public Rust API or trait contract is proposed.
+        - label: Core domain rules or typed models are proposed.
+        - label: An MCP, filesystem, storage, provider, or network adapter is proposed.

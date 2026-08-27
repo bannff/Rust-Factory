@@ -1,0 +1,14 @@
+[package]
+name = "evaluation-core"
+description = "Deterministic, immutable evaluation contracts for terminal workflow evidence."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true

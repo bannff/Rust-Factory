@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Rust Factory security reporting
+    url: https://github.com/bannff/Rust-Factory/security/advisories/new
+    about: Report potential vulnerabilities privately. Do not include secrets in public issues.

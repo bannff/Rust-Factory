@@ -1,0 +1,14 @@
+[package]
+name = "policy-memory"
+description = "Deterministic process-local policy grant resolver."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+policy-core = { path = "../policy-core", version = "=0.1.0" }
+
+[lints]
+workspace = true

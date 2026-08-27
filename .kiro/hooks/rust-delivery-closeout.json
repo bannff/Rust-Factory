@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Rust Delivery Closeout",
+      "trigger": "Stop",
+      "description": "Prompts a concise completion audit for changed Rust Factory work.",
+      "action": {
+        "type": "agent",
+        "prompt": "If product or configuration files changed in this session, perform a concise delivery closeout against `.kiro/steering/rust-delivery-workflow.md`: identify any missing required reviewer decision, validation command, spec/README/API update, or GitHub issue follow-up. Do not run commands, create issues, or repeat checks automatically. Be silent if no action is needed."
+      },
+      "enabled": true
+    }
+  ]
+}
