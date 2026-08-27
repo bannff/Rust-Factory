@@ -6,8 +6,8 @@ Rust Factory is a domain-agnostic foundation for reliable Rust services, librari
 
 One brick is one crate. Its agent-facing MCP surface and its local adapters are
 feature-gated modules inside it, so a capability is one thing to find and compose.
-No feature is on by default: the default build of every brick is the
-framework-free capability.
+No feature is on by default, so a brick's default build resolves no transport,
+schema, error-framework, filesystem, or async-runtime dependency.
 
 | Brick | Features | Capability |
 |---|---|---|
@@ -43,8 +43,8 @@ asserts adapter isolation, formats, lints, and tests — each across the feature
 matrix, because with no default features a workspace-wide command would only
 exercise the framework-free cores.
 
-`make isolation-check` asserts that each brick's default build resolves no
-adapter dependency. That is a guarantee about **source**: because Cargo unifies
-features per build graph, a binary composing several bricks with `mcp` enabled
-links one framework-carrying build of each. The workspace does not claim
-framework-free artifacts.
+`make isolation-check` asserts that each brick's default build resolves none of
+the adapter dependencies; the registry validator separately forbids naming one
+outside its own module. Neither claims framework-free *artifacts*: Cargo unifies
+features per build graph, so a binary composing several bricks with `mcp` enabled
+links one framework-carrying build of each.

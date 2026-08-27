@@ -112,7 +112,9 @@ class BrickRegistryValidatorTests(unittest.TestCase):
             document += extra if extra.endswith("\n") else extra + "\n"
         validator.VISION_PATH.write_text(document, encoding="utf-8")
 
-    def write_valid_makefile(self, bricks: str = "", recipes: str = "") -> None:
+    def write_valid_makefile(
+        self, bricks: str = IMPLEMENTED_FAMILY, recipes: str = ""
+    ) -> None:
         """The quality gate the validator cross-checks brick features against."""
         validator.MAKEFILE_PATH.write_text(
             f"BRICKS := {bricks}\n\n"
@@ -154,7 +156,7 @@ name = "{IMPLEMENTED_FAMILY}"
 
 [package.metadata.rust-factory]
 family = "{IMPLEMENTED_FAMILY}"
-role = "core"
+role = "brick"
 status = "implemented"
 """,
             encoding="utf-8",
@@ -196,7 +198,7 @@ status = "implemented"
                 self.scaffold_dir, STATUS_ONLY_FAMILY, "core", "scaffolded"
             ),
             self.package(
-                self.implemented_dir, IMPLEMENTED_FAMILY, "core", "implemented"
+                self.implemented_dir, IMPLEMENTED_FAMILY, "brick", "implemented"
             ),
         ]
 
@@ -849,6 +851,23 @@ status = "implemented"
                     package, Path(str(package["manifest_path"])), role
                 )
 
+    def test_rejects_core_role_with_behavior(self) -> None:
+        """`role = "core"` would otherwise exempt a package with behavior from the
+        adapter isolation, conditional derive, and quality gate rules, all of
+        which key on `role == "brick"`."""
+        for status in ("specified", "implemented", "migration-pending", "deprecated"):
+            with self.subTest(status=status):
+                package = self.package(
+                    self.implemented_dir, IMPLEMENTED_FAMILY, "core", status
+                )
+                self.assert_rejected(lambda: self.metadata(package))
+
+    def test_accepts_core_role_for_a_status_only_package(self) -> None:
+        package = self.package(
+            self.scaffold_dir, STATUS_ONLY_FAMILY, "core", "scaffolded"
+        )
+        self.assertEqual(self.metadata(package)["role"], "core")
+
     def test_rejects_retired_per_adapter_roles(self) -> None:
         """A brick is one crate, so an adapter is a module and not a package."""
         for role in ("mcp", "memory", "adapter", "vendor", "core-adapter"):
@@ -1135,7 +1154,7 @@ status = "implemented"
                 self.scaffold_dir, STATUS_ONLY_FAMILY, "core", "implemented"
             ),
             self.package(
-                self.implemented_dir, IMPLEMENTED_FAMILY, "core", "implemented"
+                self.implemented_dir, IMPLEMENTED_FAMILY, "brick", "implemented"
             ),
         ]
         manifest = self.scaffold_manifest()

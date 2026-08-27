@@ -88,7 +88,7 @@ untrusted transport
 
 ## Existing migration
 
-The immediate structural correction is MCP lifecycle ownership. Current `agent::mcp`, `project::mcp`, `workflow::mcp`, and `evaluation::mcp` expose `serve_stdio()` and construct bounded stdio transports. The standard moves that code into corresponding `*-server` binaries. MCP crates retain tool DTOs, routing, safe projections, and a public transport-agnostic service entry point; server crates own `BoundedStdioTransport` construction and `serve(...).waiting()` lifecycle. This must be behavior-preserving and remain separately design-gated before code changes.
+MCP lifecycle ownership is corrected: the `serve_stdio()` helpers that constructed bounded stdio transports have been deleted from all four `mcp` modules. Those modules retain tool DTOs, routing, safe projections, and a transport-agnostic service entry point; a `role = "server"` binary under `projects/` owns `BoundedStdioTransport` construction and the `serve(...).waiting()` lifecycle. No such binary exists yet, so the transport currently has no production caller (#17).
 
 The next normalization wave closes Project MCP object DTO schemas, makes raw/semantic/egress limits explicit per MCP operation, inventories whether canonical JSON is Workflow domain identity or adapter wire handling, and moves stateful Agent local adapters out of `agent` only if the extraction is proven behavior-preserving and improves the established taxonomy.
 

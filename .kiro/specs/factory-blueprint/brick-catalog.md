@@ -8,7 +8,7 @@
 | Agent | Definitions, Policy-gated MCP operations, local invocation, tool/memory/knowledge/sandbox execution ports | deterministic local adapters; Agent MCP Policy compatibility accepted; definitions remain globally shared in V1 |
 | Workflow | Lifecycle contract around an Agent attempt | process-local in-memory adapter; no recovery/cross-process cancellation |
 | Evaluation | Immutable terminal-workflow evidence assessment | deterministic in-memory reader/store and Policy-compatible MCP; no workflow mutation |
-| MCP transport | Shared server-side bounded stdio framing adapter | exact 64 KiB LF/CRLF ingress contract; adapter-only rmcp/Tokio dependencies; all four existing MCP libraries migrated to the shared bounded transport, while `serve_stdio()` lifecycle ownership remains pending server migrations |
+| MCP transport | Shared server-side bounded stdio framing adapter | exact 64 KiB LF/CRLF ingress contract; adapter-only rmcp/Tokio dependencies; all four MCP surfaces migrated to the shared bounded transport and then had `serve_stdio()` deleted, so no library owns lifecycle and the transport awaits its first `projects/` binary (#17) |
 | Adapter portfolio | Declarative selection and experiment doctrine, not a runtime registry | Blueprint-only; implementation deferred until a demonstrated project-planning consumer |
 
 ## Ownership and extraction

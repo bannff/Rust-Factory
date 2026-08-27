@@ -12,12 +12,12 @@ ProcessTrustedContextSource                 AgentServerConfigV1
               AgentDefinitionMcp::new(verified resolver)
                           │
                           ▼
-               existing serve_stdio() → agent::mcp → mcp-transport → stdio
+               binary binds BoundedStdioTransport → agent::mcp → stdio
 ```
 
 `agent-server` is a binary-only composition root. It owns process startup, bounded configuration decoding, launch-context validation, construction of concrete local adapters, and the Tokio runtime that drives `agent::mcp`. The server has no reusable domain contract: its only public executable behavior is the existing Agent MCP server surface.
 
-`AgentServerConfigV1` is an internal, versioned serde type supplied exactly once through `--config-json`; MCP stdin is reserved exclusively for `serve_stdio()`. The raw UTF-8 argument is limited to 256 KiB before serde decoding. `deny_unknown_fields`, a closed version discriminator, and binary-private collection/string ceilings make it fail closed rather than silently accepting configuration that appears to affect identity, provider selection, tools, or authorization. Conversion reuses existing Agent/Policy constructors and limits, checks the additional bootstrap ceilings before constructing any adapter, and completes before Tokio/MCP serving begins.
+`AgentServerConfigV1` is an internal, versioned serde type supplied exactly once through `--config-json`; MCP stdin is reserved exclusively for the transport the binary binds. The raw UTF-8 argument is limited to 256 KiB before serde decoding. `deny_unknown_fields`, a closed version discriminator, and binary-private collection/string ceilings make it fail closed rather than silently accepting configuration that appears to affect identity, provider selection, tools, or authorization. Conversion reuses existing Agent/Policy constructors and limits, checks the additional bootstrap ceilings before constructing any adapter, and completes before Tokio/MCP serving begins.
 
 `ProcessTrustedContextSource` is private to the binary. It receives validated tenant and principal values once from mandatory launcher arguments and creates a new `TrustedContextV1` per adapter operation. A synchronization-safe `AtomicU64` sequence assigns each `resolve` call one value; the source validates distinct `request-<sequence>` and `correlation-<sequence>` logical IDs from it. Atomic exhaustion or validation failure returns an error, so allocation never wraps or reuses an ID. Neither IDs nor identity are accepted through config or MCP parameters. This is a local trusted-launcher seam, not an authentication system: changing to OS-derived, remote, or tenant-boundary identity requires a dedicated process-boundary Policy specification.
 
@@ -30,7 +30,7 @@ The root uses existing deterministic adapters only:
 * `DenySandbox` rejects sandbox execution.
 * `StaticPolicyResolver` is initialized from static grants and denies unmatched tenant/principal/capability decisions.
 
-The root passes those adapters plus the process context source into `AgentDefinitionMcp::new(...)` and delegates stdio lifecycle and bounded framing to the established `serve_stdio()` helper. It must not implement a duplicate router, policy gate, transport, or identity parsing path. This verifies adapter-library/binary-root separation without moving code into Agent core.
+The root passes those adapters plus the process context source into `AgentDefinitionMcp::new(...)` and owns stdio lifecycle itself: it constructs `mcp_transport::BoundedStdioTransport` and drives `serve(...).waiting()`. The `serve_stdio()` helper it previously delegated to has been deleted from every brick, because a library owning process lifecycle violates requirement 6. It must not implement a duplicate router, policy gate, transport, or identity parsing path. This verifies adapter-library/binary-root separation without moving code into Agent core.
 
 ## Test strategy
 

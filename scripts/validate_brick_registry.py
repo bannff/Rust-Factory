@@ -263,6 +263,16 @@ def factory_metadata(package: dict[str, Any], manifest_path: Path) -> dict[str, 
         raise ValueError(f"{relative(manifest_path)}: unknown role {role!r}")
     if status not in VALID_STATUSES:
         raise ValueError(f"{relative(manifest_path)}: unknown status {status!r}")
+    if role == "core" and status != "scaffolded":
+        # The brick enforcement rules — adapter isolation, conditional derives,
+        # and quality-gate coverage — key on role == "brick". Allowing a package
+        # with behavior to declare role == "core" would let it exempt itself from
+        # all three while make check stayed green.
+        raise ValueError(
+            f"{relative(manifest_path)}: role = \"core\" is reserved for a status-only "
+            f"package, but this declares status = {status!r}. A package with behavior "
+            'uses role = "brick" and is subject to the adapter isolation rules'
+        )
     return factory
 
 

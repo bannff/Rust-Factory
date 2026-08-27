@@ -12,7 +12,7 @@ Policy is the canonical trusted-context and capability-grant decision layer. It 
 4. `PolicyResolver` returns allow or deny plus a canonical effective grant. Unknown principal, tenant, capability, malformed context, or resolver failure deny by default.
 5. An effective Agent grant may intersect allowed tool IDs and capability booleans; it cannot add a capability absent from the Agent definition.
 6. `policy::memory` is deterministic process-local static grants only. It makes no persistence, revocation propagation, token, delegation, or cross-process claim.
-7. `policy-mcp` is optional V1 and, if built, exposes caller-relative `policy_check` only; no policy mutation/configuration/grant enumeration.
+7. `policy` SHALL expose no MCP surface. It decides what an agent is permitted to do, so any agent-facing tool is a privilege-escalation seam: `AuthorizationRequestV1` carries trusted context, so authorizing through caller input would let a caller supply its own identity, which Canonical Brick Standard requirement 7 forbids. A caller-relative inspection tool was considered and rejected, not deferred: a capability list is a compile-time constant already implied by each brick's own tool schema, and a grant digest over caller-supplied input is authoritative evidence of nothing.
 
 ## Non-goals
 

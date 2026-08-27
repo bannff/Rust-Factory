@@ -42,11 +42,18 @@ test-features:
 	cargo test -p workflow --features mcp,memory
 	cargo test --workspace --all-features
 
-# Asserts that each brick's default build reaches no adapter dependency. This
-# proves framework-free *source*: `cargo tree -p <crate>` resolves that crate's
-# graph in isolation. It cannot prove framework-free *artifacts*, because Cargo
-# unifies features per build graph, so a binary composing several bricks with
-# `mcp` enabled links one framework-carrying build of each.
+# Asserts that each brick's default build resolves none of the adapter
+# dependencies listed below — transport, schema, error-framework, filesystem, and
+# async runtime. It does not claim a brick has no third-party dependency: every
+# brick still resolves sha2, and workflow resolves serde and serde_json in its
+# core.
+#
+# Two limits worth being precise about. This checks dependency *resolution*, not
+# source text; the validator's path rule is what keeps an adapter crate from
+# being named outside its own module. And `cargo tree -p` resolves one crate's
+# graph in isolation, so it says nothing about artifacts: Cargo unifies features
+# per build graph, so a binary composing several bricks with `mcp` enabled links
+# one framework-carrying build of each.
 ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio
 
 isolation-check:

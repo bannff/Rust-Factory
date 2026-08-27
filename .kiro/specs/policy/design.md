@@ -7,7 +7,7 @@ policy
           ↑
 policy::memory      static deterministic principal/tenant grants
           ↑
-policy-mcp         optional caller-relative policy_check
+(no MCP surface: the authorization substrate is not agent-operable)
           ↑
 existing MCP adapters consume PolicyResolver through compatibility adapters
 ```
