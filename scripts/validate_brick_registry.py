@@ -26,6 +26,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_MANIFEST = ROOT / "Cargo.toml"
+MAKEFILE_PATH = ROOT / "Makefile"
 VISION_PATH = ROOT / ".kiro" / "steering" / "living-factory-vision.md"
 
 LIBRARY_DIR = "crates"
@@ -117,6 +118,11 @@ ADAPTER_MODULES = {
     "anyhow": "mcp",
     "cap_std": "fs",
 }
+
+# Every module name a brick may feature gate. This is a superset of
+# ADAPTER_MODULES' values because an adapter need not pull a dependency at all:
+# a `memory` adapter is deterministic and uses only the standard library.
+ADAPTER_MODULE_NAMES = frozenset({"mcp", "memory", "fs"})
 VALID_STATUSES = {
     "scaffolded",
     "specified",
@@ -335,36 +341,68 @@ def source_files(package_dir: Path) -> list[Path]:
     return sorted(path for path in package_dir.rglob("*.rs") if path.is_file())
 
 
-def module_of(source: Path, package_dir: Path) -> str:
+def module_of(source: Path, package_dir: Path) -> str | None:
     """Returns the top-level module a source file belongs to.
 
     ``src/mcp.rs`` and ``src/mcp/service.rs`` both yield ``mcp``; ``src/lib.rs``
-    yields the empty string.
+    yields the empty string. Returns None for a target outside ``src/`` — an
+    integration test, bench, or build script — which the module rules do not
+    govern because such a target is separately feature-gated at file scope.
     """
-    relative = source.relative_to(package_dir)
-    parts = relative.parts
-    if len(parts) < 2 or parts[0] != "src":
-        return ""
+    parts = source.relative_to(package_dir).parts
+    if not parts or parts[0] != "src":
+        return None
+    if len(parts) < 2:
+        return None
     if len(parts) == 2:
         return "" if parts[1] == "lib.rs" else parts[1].removesuffix(".rs")
     return parts[1]
 
 
+def adapter_references(text: str, crate: str) -> bool:
+    """Detects a reference to an adapter crate, including under an alias.
+
+    A path rule that matched only ``crate::`` would be evaded by
+    ``use rmcp as framework;`` followed by ``framework::Type``, so the import
+    itself is matched too.
+    """
+    escaped = re.escape(crate)
+    return bool(
+        re.search(rf"\b{escaped}\s*::", text)
+        or re.search(rf"^\s*(?:pub\s+)?use\s+(?:::)?{escaped}\b", text, re.MULTILINE)
+        or re.search(rf"\bextern\s+crate\s+{escaped}\b", text)
+    )
+
+
 def validate_adapter_isolation(package_dir: Path) -> None:
-    """Keeps adapter dependencies inside their own feature-gated module."""
+    """Keeps adapter dependencies inside their own feature-gated module.
+
+    Also keeps core modules from reaching *into* an adapter module, since
+    consuming a boundary DTO from the core is the same violation approached from
+    the other side.
+    """
+    adapter_modules = ADAPTER_MODULE_NAMES
     for source in source_files(package_dir):
         module = module_of(source, package_dir)
+        if module is None:
+            continue
         text = read_bounded(source)
         for crate, required_module in ADAPTER_MODULES.items():
-            if not re.search(rf"\b{re.escape(crate)}::", text):
-                continue
-            if module != required_module:
-                location = relative(source)
+            if adapter_references(text, crate) and module != required_module:
                 raise ValueError(
-                    f"{location}: names the adapter dependency {crate!r}, which may "
-                    f"appear only under the {required_module!r} module. Adapter code "
-                    "belongs behind its own feature gate so the default build stays "
-                    "framework-free"
+                    f"{relative(source)}: names the adapter dependency {crate!r}, "
+                    f"which may appear only under the {required_module!r} module. "
+                    "Adapter code belongs behind its own feature gate so the default "
+                    "build stays framework-free"
+                )
+        if module in adapter_modules:
+            continue
+        for adapter_module in sorted(adapter_modules):
+            if re.search(rf"\bcrate\s*::\s*{re.escape(adapter_module)}\s*::", text):
+                raise ValueError(
+                    f"{relative(source)}: reaches into the {adapter_module!r} adapter "
+                    "module. A core module must not consume a boundary type; the "
+                    "conversion belongs inside the adapter"
                 )
 
 
@@ -383,20 +421,60 @@ def validate_feature_table(manifest_path: Path, manifest: dict[str, Any]) -> Non
         )
 
 
+def attribute_bodies(text: str, name: str) -> list[str]:
+    """Returns the argument text of each ``#[name(...)]`` attribute.
+
+    Brackets are balanced rather than matched by regex so a nested predicate such
+    as ``cfg_attr(all(feature = "mcp"), derive(Serialize))`` is captured whole.
+    """
+    bodies: list[str] = []
+    for match in re.finditer(rf"#\s*!?\s*\[\s*{re.escape(name)}\s*\(", text):
+        depth = 1
+        index = match.end()
+        while index < len(text) and depth:
+            if text[index] == "(":
+                depth += 1
+            elif text[index] == ")":
+                depth -= 1
+            index += 1
+        bodies.append(text[match.end() : index - 1])
+    return bodies
+
+
 def validate_conditional_derives(package_dir: Path) -> None:
-    """A cfg_attr feature gate outside an adapter module would give the crate two
-    different public APIs depending on who else is in the build graph."""
+    """Outside an adapter module, a feature-conditional item or attribute would
+    give the crate two different public APIs depending on who else is in the
+    build graph. The adapter `mod` declaration itself is the sole exception."""
+    adapter_modules = ADAPTER_MODULE_NAMES
     for source in source_files(package_dir):
         module = module_of(source, package_dir)
-        if module in set(ADAPTER_MODULES.values()):
+        if module is None or module in adapter_modules:
             continue
         text = read_bounded(source)
-        if re.search(r"#\s*\[\s*cfg_attr\s*\(\s*feature\s*=", text):
-            raise ValueError(
-                f"{relative(source)}: uses a feature-conditional attribute outside an "
-                "adapter module. Boundary types belong in the adapter module rather "
-                "than deriving onto a domain type under cfg_attr"
-            )
+        for body in attribute_bodies(text, "cfg_attr"):
+            if re.search(r"\bfeature\s*=", body):
+                raise ValueError(
+                    f"{relative(source)}: uses a feature-conditional attribute outside "
+                    "an adapter module. Boundary types belong in the adapter module "
+                    "rather than deriving onto a domain type under cfg_attr"
+                )
+        # A feature-gated item in a core module is the same hazard by another
+        # route. Only the adapter module declarations may be feature gated.
+        for body in attribute_bodies(text, "cfg"):
+            if not re.search(r"\bfeature\s*=", body):
+                continue
+            gated = [name for name in adapter_modules if f'"{name}"' in body]
+            if len(gated) != 1 or not re.search(
+                rf"#\s*\[\s*cfg\s*\([^)]*\bfeature\s*=\s*\"{gated[0]}\"[^)]*\)\s*\]\s*"
+                rf"(?:pub\s+)?mod\s+{gated[0]}\s*;",
+                text,
+            ):
+                raise ValueError(
+                    f"{relative(source)}: feature-gates an item outside an adapter "
+                    "module. Only the adapter `mod` declaration may be feature gated, "
+                    "or the crate has two different public APIs depending on which "
+                    "features another package in the build graph enables"
+                )
 
 
 def validate_status_only_placement(manifest_path: Path, family: str, role: str) -> None:
@@ -549,6 +627,59 @@ def validate_source_content(package_dir: Path) -> None:
             raise ValueError(
                 f"{relative(path)}: status-only sources may contain only comments"
             )
+
+
+def validate_quality_gate_coverage(brick_features: dict[str, set[str]]) -> None:
+    """Every brick and every declared feature must appear in the quality gate.
+
+    Adapters are feature gated, so a workspace-wide command compiles only the
+    cores. That makes the Makefile's enumerations load-bearing: a brick or
+    feature missing from them is code that is never linted, never tested, and
+    never isolation-checked, with a green `make check`. This is the same reason
+    the registry keeps an independent second statement of the family set.
+    """
+    makefile = MAKEFILE_PATH
+    if not makefile.is_file():
+        raise ValueError(f"{relative(makefile)}: missing quality gate")
+    text = read_bounded(makefile)
+    listed = re.search(r"^BRICKS[ \t]*:?=[ \t]*(.*)$", text, re.MULTILINE)
+    if listed is None:
+        raise ValueError(f"{relative(makefile)}: no BRICKS list to check bricks against")
+    enumerated = set(listed.group(1).split())
+    declared = set(brick_features)
+    missing = sorted(declared.difference(enumerated))
+    if missing:
+        raise ValueError(
+            f"{relative(makefile)}: BRICKS omits {', '.join(missing)}; an omitted "
+            "brick is never isolation-checked"
+        )
+    stale = sorted(enumerated.difference(declared))
+    if stale:
+        raise ValueError(
+            f"{relative(makefile)}: BRICKS lists {', '.join(stale)}, which declares "
+            "no brick package"
+        )
+    for target, verb in (("lint-features", "linted"), ("test-features", "tested")):
+        body = re.search(rf"^{target}:\n((?:\t.*\n)+)", text, re.MULTILINE)
+        if body is None:
+            raise ValueError(f"{relative(makefile)}: missing the {target} target")
+        recipe = body.group(1)
+        for brick, features in sorted(brick_features.items()):
+            for feature in sorted(features):
+                covered = any(
+                    f"-p {brick} " in line and feature in _feature_list(line)
+                    for line in recipe.splitlines()
+                )
+                if not covered:
+                    raise ValueError(
+                        f"{relative(makefile)}: {target} never builds {brick!r} with "
+                        f"its {feature!r} feature, so that code is never {verb}"
+                    )
+
+
+def _feature_list(line: str) -> set[str]:
+    match = re.search(r"--features\s+([\w,\-]+)", line)
+    return set(match.group(1).split(",")) if match else set()
 
 
 def declared_members() -> list[str]:
@@ -820,6 +951,7 @@ def main() -> int:
         validate_workspace_inventory(packages)
         declared_statuses: dict[str, set[str]] = {}
         owned_names: dict[str, set[str]] = {}
+        brick_features: dict[str, set[str]] = {}
         for package in packages:
             manifest_path = Path(package["manifest_path"]).resolve()
             factory = factory_metadata(package, manifest_path)
@@ -831,10 +963,13 @@ def main() -> int:
             owned_names.setdefault(family, set()).add(str(package["name"]))
             validate_location_and_targets(package, manifest_path, role)
             package_dir = package_directory(manifest_path)
-            validate_feature_table(manifest_path, load_toml(manifest_path))
+            manifest = load_toml(manifest_path)
+            validate_feature_table(manifest_path, manifest)
             if role == "brick":
                 validate_adapter_isolation(package_dir)
                 validate_conditional_derives(package_dir)
+                features = manifest.get("features") or {}
+                brick_features[str(package["name"])] = set(features)
             if status != "scaffolded":
                 continue
             validate_status_only_placement(manifest_path, family, role)
@@ -842,6 +977,7 @@ def main() -> int:
             validate_manifest_configuration(manifest_path, load_toml(manifest_path))
             validate_source_content(package_dir)
         validate_registry(declared_statuses, owned_names)
+        validate_quality_gate_coverage(brick_features)
     except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
         print(f"Brick registry validation failed: {error}", file=sys.stderr)
         return 1

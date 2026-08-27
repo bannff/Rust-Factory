@@ -6,7 +6,7 @@ Provide the durable, domain-agnostic lifecycle around one bounded Agent invocati
 
 ## First vertical slice
 
-1. The slice SHALL provide `workflow`, `workflow-memory`, and `workflow-mcp` bricks.
+1. The slice SHALL provide `workflow`, `workflow::memory`, and `workflow::mcp` bricks.
 2. It SHALL support one immutable, versioned single-step workflow definition whose only step is a named Agent invocation.
 3. `workflow` SHALL own typed workflow definitions, request context, runs, attempts, append-only events, statuses, terminal reasons, budgets, errors, and core-owned ports.
 4. A `WorkflowStore` port SHALL atomically create-or-return a run by `(tenant_id, workflow_id, workflow_version, run_key, input_digest)` and perform compare-and-set updates by revision.

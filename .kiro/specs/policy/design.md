@@ -5,7 +5,7 @@ policy
   TrustedContextV1 + CapabilityV1 + GrantV1 + Decision
   PolicyResolver trait
           ↑
-policy-memory      static deterministic principal/tenant grants
+policy::memory      static deterministic principal/tenant grants
           ↑
 policy-mcp         optional caller-relative policy_check
           ↑
@@ -22,7 +22,7 @@ existing MCP adapters consume PolicyResolver through compatibility adapters
 
 ## Migration
 
-Phase 1: introduce Policy with static adapter/tests only. Phase 2: `workflow-mcp::RequestContextResolver` becomes a compatibility adapter over Policy context and decisions; every workflow operation authorizes before catalog/store/invoker access. Phase 3: replace Evaluation’s duplicate trusted context resolver. Phase 4: inject Policy into Agent MCP; agent definitions remain shared/global until a separately specified tenant-scoped DefinitionStore migration. No core crate depends on Policy during phase 1; MCP adapters depend on Policy only through adapters/constructors.
+Phase 1: introduce Policy with static adapter/tests only. Phase 2: `workflow::mcp::RequestContextResolver` becomes a compatibility adapter over Policy context and decisions; every workflow operation authorizes before catalog/store/invoker access. Phase 3: replace Evaluation’s duplicate trusted context resolver. Phase 4: inject Policy into Agent MCP; agent definitions remain shared/global until a separately specified tenant-scoped DefinitionStore migration. No core crate depends on Policy during phase 1; MCP adapters depend on Policy only through adapters/constructors.
 
 ## Canonical decision encoding
 

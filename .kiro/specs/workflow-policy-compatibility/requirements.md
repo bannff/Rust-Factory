@@ -2,7 +2,7 @@
 
 Migrate Workflow MCP to injected trusted context and Policy decisions without changing Workflow core lifecycle semantics.
 
-1. `workflow-mcp` SHALL receive a host-owned trusted-context source and `PolicyResolver` through a compatibility adapter; no caller MCP field establishes identity.
+1. `workflow::mcp` SHALL receive a host-owned trusted-context source and `PolicyResolver` through a compatibility adapter; no caller MCP field establishes identity.
 2. After bounded request deserialization and before any catalog/store/invoker access, every operation authorizes its exact `CapabilityV1`.
 3. Map: validate→WorkflowValidate; start→WorkflowStart; get→WorkflowGet; list→WorkflowList; cancel→WorkflowCancel.
 4. Resolver failure or deny causes zero catalog/store/invoker calls. Validate deny maps to `not_found`; tenant-resource deny maps to `not_found` to prevent enumeration.

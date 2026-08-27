@@ -47,9 +47,19 @@ test-features:
 # graph in isolation. It cannot prove framework-free *artifacts*, because Cargo
 # unifies features per build graph, so a binary composing several bricks with
 # `mcp` enabled links one framework-carrying build of each.
+ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio
+
 isolation-check:
+	@for dep in $(ADAPTER_DEPS); do \
+		if ! cargo tree -q --workspace --all-features --invert $$dep >/dev/null 2>&1; then \
+			echo "isolation-check aborted: cannot resolve $$dep anywhere in the workspace." >&2; \
+			echo "  A non-zero exit from cargo tree would otherwise be read as absence," >&2; \
+			echo "  making every check below vacuously pass." >&2; \
+			exit 1; \
+		fi; \
+	done
 	@for brick in $(BRICKS); do \
-		for dep in rmcp mcp-transport schemars anyhow cap-std tokio; do \
+		for dep in $(ADAPTER_DEPS); do \
 			if cargo tree -q -p $$brick --invert $$dep >/dev/null 2>&1; then \
 				echo "isolation-check failed: default build of $$brick reaches $$dep" >&2; \
 				exit 1; \

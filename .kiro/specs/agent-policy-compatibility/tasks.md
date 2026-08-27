@@ -1,6 +1,6 @@
 # Tasks
 
-- [x] Add adapter-only `policy`, exact bounded-transport dependencies, and private 64 KiB stdio transport to `agent-mcp`.
+- [x] Add adapter-only `policy`, exact bounded-transport dependencies, and private 64 KiB stdio transport to `agent::mcp`.
 - [x] Replace unprotected Agent MCP construction with verified host-context/Policy resolver construction.
 - [x] Validate bounded inputs before source/Policy access and authorize the exact capability before every domain path.
 - [x] Prove all five MCP schemas reject each caller-supplied identity/policy field—including zero-argument list—before trusted context, Policy, or domain access.
@@ -10,7 +10,7 @@
 - [x] Prove globally shared definition behavior remains explicit and Policy does not create false tenant-private claims.
 - [x] Prove bounded LF/CRLF transport framing, exact limit, fragmented oversize terminal behavior, successor suppression, and cancellation-safe partial input.
 - [x] Confirm `agent` public contracts, dependency graph, and direct full-scope `invoke` compatibility remain unchanged.
-- [x] Run `cargo test -p agent -p agent-mcp`, QA, security, Rust SME, architecture, and `make check`.
+- [x] Run `cargo test -p agent --features mcp`, QA, security, Rust SME, architecture, and `make check`.
 
 ## Acceptance evidence
 

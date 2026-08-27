@@ -1,6 +1,6 @@
 # Tasks
 
-- [x] Add `policy` only to `evaluation-mcp` and replace the legacy trusted-context constructor seam with the verified Policy compatibility resolver.
+- [x] Add `policy` only to `evaluation::mcp` and replace the legacy trusted-context constructor seam with the verified Policy compatibility resolver.
 - [x] Add private bounded stdio JSON-RPC transport with a 64 KiB pre-deserialization inbound frame limit.
 - [x] Validate bounded input before trusted-context/Policy access; authorize the exact Evaluation capability before reader/store access.
 - [x] Prove source failure, deny, and tampered Allow decision make zero reader/store calls for validate, evaluate, and get.
@@ -8,7 +8,7 @@
 - [x] Prove allowed evaluate/get retain immutable create-or-match, tenant non-disclosure, read-only Workflow evidence behavior, and safe output projections.
 - [x] Prove bounded stdio transport accepts valid fragmented input and terminates oversized frames before dispatch.
 - [x] Confirm Evaluation core/memory public contracts and canonical result hash are unchanged; no policy decision is persisted.
-- [x] Run `cargo test -p evaluation -p evaluation-memory -p evaluation-mcp`.
+- [x] Run `cargo test -p evaluation --features mcp,memory`.
 - [x] Run QA, security, Rust SME, architecture gates, and `make check`.
 
 ## Acceptance evidence

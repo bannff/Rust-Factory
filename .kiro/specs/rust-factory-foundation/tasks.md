@@ -15,4 +15,4 @@
 
 ## Validation matrix
 
-Narrow command: `cargo test -p project -p project-fs -p project-mcp`. Required: validation/plan determinism, filesystem confinement, MCP schema, generated fixture. Conditional: proptest for name/path invariants; fuzz parser ingress. N/A: loom until shared-state adapter; canonical golden hashes (no canonical record contract).
+Narrow command: `cargo test -p project --features mcp,fs`. Required: validation/plan determinism, filesystem confinement, MCP schema, generated fixture. Conditional: proptest for name/path invariants; fuzz parser ingress. N/A: loom until shared-state adapter; canonical golden hashes (no canonical record contract).

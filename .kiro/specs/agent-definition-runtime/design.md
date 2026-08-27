@@ -10,7 +10,7 @@ agent
                  ↑
   deterministic local adapters (first) → provider/storage/sandbox adapters (later)
                  ↑
-  agent-mcp: control-plane validation, registry, bounded invoke
+  agent::mcp: control-plane validation, registry, bounded invoke
 ```
 
 The core owns data and policy. Each adapter implements one core-owned trait. The MCP crate receives those traits through dependency injection and never selects a provider or constructs a storage/sandbox adapter itself.

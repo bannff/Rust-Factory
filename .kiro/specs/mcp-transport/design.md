@@ -1,10 +1,10 @@
 # Design
 
 ```text
-agent-mcp ───────┐
-workflow-mcp ────┼──> mcp-transport ───> rmcp / Tokio framing primitives
- evaluation-mcp ─┤
-project-mcp ─────┘
+agent::mcp ───────┐
+workflow::mcp ────┼──> mcp-transport ───> rmcp / Tokio framing primitives
+ evaluation::mcp ─┤
+project::mcp ─────┘
 
 all capability library crates: no dependency on mcp-transport, rmcp, Tokio, or futures
 ```

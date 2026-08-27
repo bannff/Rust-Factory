@@ -7,12 +7,12 @@ workflow
   WorkflowDefinition / Run / Attempt / Event / RequestContext
   WorkflowStore + AgentInvoker traits
                    ↑
-workflow-memory   deterministic in-memory store and static agent invoker
+workflow::memory   deterministic in-memory store and static agent invoker
                    ↑
-workflow-mcp      validate / start / get / list / cancel
+workflow::mcp      validate / start / get / list / cancel
 ```
 
-The core owns durable lifecycle semantics but no storage, agent, provider, or MCP framework types. `workflow-memory` implements the first deterministic store. `workflow-mcp` receives a store and invoker through dependency injection. Dependencies flow inward.
+The core owns durable lifecycle semantics but no storage, agent, provider, or MCP framework types. `workflow::memory` implements the first deterministic store. `workflow::mcp` receives a store and invoker through dependency injection. Dependencies flow inward.
 
 ## Model
 

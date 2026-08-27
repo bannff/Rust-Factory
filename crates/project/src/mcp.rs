@@ -105,11 +105,6 @@ where
         }
     }
 
-    /// Starts the MCP server over standard input/output.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the stdio transport cannot start or terminates unexpectedly.
     fn validate_json(&self, input: BlueprintInput) -> Result<String> {
         let report = self.author.validate(&input.into_core());
         let findings = report

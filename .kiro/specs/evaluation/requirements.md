@@ -7,7 +7,7 @@ Evaluation independently assesses immutable terminal Workflow evidence. It SHALL
 3. The first evaluator SHALL be deterministic: exact expected output and bounded predicates over normalized terminal evidence.
 4. Every result SHALL include evaluator ID/version, criterion/input digest, evidence reference, verdict (`pass`, `fail`, or `error`), findings, and immutable content hash.
 5. `EvaluationStore` SHALL create-or-match immutable content-addressed records; conflicting identity/content is an error.
-6. `evaluation-mcp` SHALL expose `evaluation_validate`, `evaluation_evaluate_run`, and `evaluation_get_result`; it derives trusted tenant/principal context at ingress and returns safe public projections only.
+6. `evaluation::mcp` SHALL expose `evaluation_validate`, `evaluation_evaluate_run`, and `evaluation_get_result`; it derives trusted tenant/principal context at ingress and returns safe public projections only.
 7. Evaluation results may be linked by later Workflow projections but SHALL never change Workflow terminal status.
 
 Non-goals: model-judged evaluation, UI/dashboard suites, arbitrary scorer callbacks, experiment runners, direct provider configuration, workflow control, or mesh replication.

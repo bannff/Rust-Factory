@@ -11,7 +11,7 @@ Policy is the canonical trusted-context and capability-grant decision layer. It 
 3. Closed capabilities cover existing controls: Agent definition validate/get/list/register, Agent invoke, Workflow validate/start/get/list/cancel, Evaluation validate/evaluate/get.
 4. `PolicyResolver` returns allow or deny plus a canonical effective grant. Unknown principal, tenant, capability, malformed context, or resolver failure deny by default.
 5. An effective Agent grant may intersect allowed tool IDs and capability booleans; it cannot add a capability absent from the Agent definition.
-6. `policy-memory` is deterministic process-local static grants only. It makes no persistence, revocation propagation, token, delegation, or cross-process claim.
+6. `policy::memory` is deterministic process-local static grants only. It makes no persistence, revocation propagation, token, delegation, or cross-process claim.
 7. `policy-mcp` is optional V1 and, if built, exposes caller-relative `policy_check` only; no policy mutation/configuration/grant enumeration.
 
 ## Non-goals

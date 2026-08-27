@@ -7,9 +7,9 @@ evaluation
   EvaluationDefinition / EvidenceRef / Result / Verdict
   WorkflowEvidenceReader + EvaluationStore
           ↑
-evaluation-memory  deterministic reader/store adapters
+evaluation::memory  deterministic reader/store adapters
           ↑
-evaluation-mcp     validate / evaluate_run / get_result
+evaluation::mcp     validate / evaluate_run / get_result
 ```
 
 `evaluation` defines a deterministic criterion and canonical immutable record. `WorkflowEvidenceReader` returns only a tenant-authorized terminal snapshot. `EvaluationStore` persists by content hash using create-or-match semantics. The MCP adapter injects both ports and never receives a Workflow mutator or Agent invoker.
@@ -20,7 +20,7 @@ Next implementation sequence: core contracts/validation → in-memory evidence r
 
 ## Rust SME refinements
 
-`evaluation` does not consume `workflow::Run` directly. It owns a versioned `TerminalEvidenceSnapshotV1` projection and reads it through a tenant-scoped port. Canonical bytes are built only in core using length-prefixed UTF-8 fields; tenant scope is semantic and hashed. `evaluation-memory` may adapt `workflow` into that projection, while `evaluation-mcp` depends only on `evaluation` plus MCP/serialization and receives reader/store/trusted-context ports by injection.
+`evaluation` does not consume `workflow::Run` directly. It owns a versioned `TerminalEvidenceSnapshotV1` projection and reads it through a tenant-scoped port. Canonical bytes are built only in core using length-prefixed UTF-8 fields; tenant scope is semantic and hashed. `evaluation::memory` may adapt `workflow` into that projection, while `evaluation::mcp` depends only on `evaluation` plus MCP/serialization and receives reader/store/trusted-context ports by injection.
 
 The core supplies complete immutable records to an atomic create-or-match store. A logical key conflict is distinct from content equality. Contract tests cover canonical/hash equivalence and mutation, tenant non-disclosure, terminal snapshot integrity, concurrent create-or-match, each closed criterion, criterion limits, and malformed evidence ERROR behavior.
 

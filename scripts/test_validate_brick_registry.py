@@ -53,6 +53,7 @@ class BrickRegistryValidatorTests(unittest.TestCase):
             for name in (
                 "ROOT",
                 "ROOT_MANIFEST",
+                "MAKEFILE_PATH",
                 "VISION_PATH",
                 "ACTIVE_FAMILIES",
                 "DEFERRED_FAMILIES",
@@ -61,6 +62,7 @@ class BrickRegistryValidatorTests(unittest.TestCase):
         }
         validator.ROOT = self.root
         validator.ROOT_MANIFEST = self.root / "Cargo.toml"
+        validator.MAKEFILE_PATH = self.root / "Makefile"
         validator.VISION_PATH = self.root / "living-factory-vision.md"
         validator.ACTIVE_FAMILIES = dict(ACTIVE_FAMILIES)
         validator.DEFERRED_FAMILIES = dict(DEFERRED_FAMILIES)
@@ -76,6 +78,7 @@ class BrickRegistryValidatorTests(unittest.TestCase):
         self.write_valid_registry()
         self.write_valid_scaffold()
         self.write_valid_implemented()
+        self.write_valid_makefile()
 
     def restore_globals(self) -> None:
         for name, value in self.originals.items():
@@ -108,6 +111,15 @@ class BrickRegistryValidatorTests(unittest.TestCase):
         if extra:
             document += extra if extra.endswith("\n") else extra + "\n"
         validator.VISION_PATH.write_text(document, encoding="utf-8")
+
+    def write_valid_makefile(self, bricks: str = "", recipes: str = "") -> None:
+        """The quality gate the validator cross-checks brick features against."""
+        validator.MAKEFILE_PATH.write_text(
+            f"BRICKS := {bricks}\n\n"
+            f"lint-features:\n\t@true\n{recipes}\n"
+            f"test-features:\n\t@true\n{recipes}\n",
+            encoding="utf-8",
+        )
 
     def write_valid_scaffold(self) -> None:
         self.scaffold_dir.mkdir(parents=True, exist_ok=True)
@@ -956,6 +968,160 @@ status = "implemented"
         )
         validator.validate_conditional_derives(self.implemented_dir)
         path.unlink()
+
+    def test_rejects_conditional_attribute_behind_a_nested_predicate(self) -> None:
+        """A regex anchored on `feature =` would miss all(), any(), and not()."""
+        for predicate in (
+            'all(feature = "mcp")',
+            'any(feature = "mcp", feature = "fs")',
+            'not(feature = "mcp")',
+            'all(unix, feature = "mcp")',
+        ):
+            with self.subTest(predicate=predicate):
+                original = (self.implemented_dir / "src/lib.rs").read_text(
+                    encoding="utf-8"
+                )
+                self.write_brick_source(
+                    "src/lib.rs",
+                    f"#[cfg_attr({predicate}, derive(Debug))]\nstruct Leaky;\n",
+                )
+                self.assert_rejected(
+                    lambda: validator.validate_conditional_derives(self.implemented_dir)
+                )
+                self.write_brick_source("src/lib.rs", original)
+
+    def test_rejects_feature_gated_item_in_a_core_module(self) -> None:
+        """A cfg-gated re-export names no adapter crate and uses no cfg_attr, but
+        still gives the crate two public APIs."""
+        for body in (
+            '#[cfg(feature = "mcp")]\npub use self::mcp::Dto;\n',
+            '#[cfg(feature = "mcp")]\npub fn extra() {}\n',
+            '#[cfg(feature = "memory")]\nimpl Leaky {}\n',
+        ):
+            with self.subTest(body=body):
+                original = (self.implemented_dir / "src/lib.rs").read_text(
+                    encoding="utf-8"
+                )
+                self.write_brick_source("src/lib.rs", body)
+                self.assert_rejected(
+                    lambda: validator.validate_conditional_derives(self.implemented_dir)
+                )
+                self.write_brick_source("src/lib.rs", original)
+
+    def test_accepts_feature_gated_adapter_module_declaration(self) -> None:
+        for module in sorted(validator.ADAPTER_MODULE_NAMES):
+            with self.subTest(module=module):
+                self.write_brick_source(
+                    "src/lib.rs",
+                    f'#[cfg(feature = "{module}")]\npub mod {module};\n',
+                )
+                self.write_brick_source(f"src/{module}.rs", "// adapter\n")
+                validator.validate_conditional_derives(self.implemented_dir)
+                (self.implemented_dir / f"src/{module}.rs").unlink()
+
+    def test_rejects_adapter_dependency_reached_through_an_alias(self) -> None:
+        for body in (
+            "use rmcp as framework;\n",
+            "pub use rmcp as framework;\n",
+            "use ::rmcp as framework;\n",
+            "extern crate rmcp;\n",
+        ):
+            with self.subTest(body=body):
+                original = (self.implemented_dir / "src/lib.rs").read_text(
+                    encoding="utf-8"
+                )
+                self.write_brick_source("src/lib.rs", body)
+                self.assert_rejected(
+                    lambda: validator.validate_adapter_isolation(self.implemented_dir)
+                )
+                self.write_brick_source("src/lib.rs", original)
+
+    def test_rejects_core_module_reaching_into_an_adapter_module(self) -> None:
+        for body in (
+            "pub fn leak(_input: crate::mcp::Dto) {}\n",
+            "use crate::mcp::Dto;\n",
+            "type Alias = crate :: fs :: Writer;\n",
+        ):
+            with self.subTest(body=body):
+                original = (self.implemented_dir / "src/lib.rs").read_text(
+                    encoding="utf-8"
+                )
+                self.write_brick_source("src/lib.rs", body)
+                self.assert_rejected(
+                    lambda: validator.validate_adapter_isolation(self.implemented_dir)
+                )
+                self.write_brick_source("src/lib.rs", original)
+
+    def test_allows_an_adapter_module_to_reference_its_own_path(self) -> None:
+        path = self.write_brick_source(
+            "src/mcp.rs", "fn convert(_d: crate::mcp::Dto) {}\n"
+        )
+        validator.validate_adapter_isolation(self.implemented_dir)
+        path.unlink()
+
+    def test_exempts_targets_outside_src_from_module_rules(self) -> None:
+        """An integration test is feature-gated at file scope, so the module path
+        rules do not govern it; otherwise no adapter could ever be tested from
+        `tests/`."""
+        for relative_path in ("tests/mcp_contract.rs", "benches/throughput.rs"):
+            with self.subTest(relative_path=relative_path):
+                path = self.write_brick_source(
+                    relative_path,
+                    '#![cfg(feature = "mcp")]\nfn probe() { let _ = rmcp::Thing; }\n',
+                )
+                validator.validate_adapter_isolation(self.implemented_dir)
+                validator.validate_conditional_derives(self.implemented_dir)
+                self.assertIsNone(
+                    validator.module_of(path, self.implemented_dir)
+                )
+                path.unlink()
+
+    # ---- quality gate coverage ------------------------------------------
+
+    def test_accepts_a_quality_gate_that_covers_every_brick_feature(self) -> None:
+        self.write_valid_makefile(
+            bricks="gizmo",
+            recipes="\tcargo test -p gizmo --features mcp,memory\n",
+        )
+        validator.validate_quality_gate_coverage({"gizmo": {"mcp", "memory"}})
+
+    def test_rejects_a_brick_absent_from_the_isolation_list(self) -> None:
+        self.write_valid_makefile(
+            bricks="", recipes="\tcargo test -p gizmo --features mcp\n"
+        )
+        self.assert_rejected(
+            lambda: validator.validate_quality_gate_coverage({"gizmo": {"mcp"}})
+        )
+
+    def test_rejects_an_isolation_list_naming_an_unknown_brick(self) -> None:
+        self.write_valid_makefile(bricks="gizmo ghost")
+        self.assert_rejected(
+            lambda: validator.validate_quality_gate_coverage({"gizmo": set()})
+        )
+
+    def test_rejects_a_feature_no_target_ever_builds(self) -> None:
+        self.write_valid_makefile(
+            bricks="gizmo", recipes="\tcargo test -p gizmo --features mcp\n"
+        )
+        self.assert_rejected(
+            lambda: validator.validate_quality_gate_coverage(
+                {"gizmo": {"mcp", "memory"}}
+            )
+        )
+
+    def test_rejects_a_missing_quality_gate(self) -> None:
+        validator.MAKEFILE_PATH.unlink()
+        self.assert_rejected(
+            lambda: validator.validate_quality_gate_coverage({"gizmo": {"mcp"}})
+        )
+
+    def test_rejects_a_quality_gate_without_a_brick_list(self) -> None:
+        validator.MAKEFILE_PATH.write_text(
+            "lint-features:\n\t@true\ntest-features:\n\t@true\n", encoding="utf-8"
+        )
+        self.assert_rejected(
+            lambda: validator.validate_quality_gate_coverage({"gizmo": set()})
+        )
 
     # ---- end-to-end main() ----------------------------------------------
 
