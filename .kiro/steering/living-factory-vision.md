@@ -37,7 +37,7 @@ A linked edge binary is a local composition topology, not a mesh adapter. It inh
 ## Three planes
 
 1. **Authoring plane — MCP.** Agents discover bricks and use bounded tools to create projects, configure agents, retrieve steering/skills/knowledge, operate workflows, and inspect evaluation evidence.
-2. **Execution plane — native Rust.** A deployed agent uses typed ports such as `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, `Sandbox`, `ModelProvider`, and `MessageBus`. Concrete implementations remain replaceable adapters.
+2. **Execution plane — native Rust.** A deployed agent uses typed ports such as `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, `Sandbox`, and `ModelProvider`, all currently owned by `agent-core`. Concrete implementations remain replaceable adapters. A `MessageBus` port is intended but does not exist; see the Message bus row in the portfolio registry.
 3. **Mesh/data plane — native peer protocol.** Deployed peers discover, communicate, and replicate explicitly selected data while remaining capable of offline operation and recovery.
 
 ## Agentic control-plane ownership
@@ -59,22 +59,30 @@ Use CRDTs for eventually consistent replicated state—capability advertisements
 A mature brick may be split into:
 
 ```text
-<brick>-core       domain models, rules, traits, and errors
-<brick>-memory     deterministic local adapter
-<brick>-<vendor>   optional storage/model/network adapter
-<brick>-mcp        MCP control-plane adapter library
-<brick>-server     optional thin process composition root
-<brick>-mesh       optional peer-coordination adapter
-mcp-transport     shared bounded MCP transport adapter, never a core
+crates/
+  <brick>-core       domain models, rules, traits, and errors
+  <brick>-memory     deterministic local adapter
+  <brick>-<adapter>  optional storage/model/network adapter
+  <brick>-mcp        MCP control-plane adapter library
+  <brick>-mesh       optional peer-coordination adapter
+  mcp-transport      shared bounded MCP transport adapter, never a core
+projects/
+  <name>             optional thin binary composition root
 ```
+
+A composition root is named for the deployable it produces, not for a capability family: it owns no capability and may host several brick MCP surfaces. The per-family `-server` shape recorded in the registry's mature-shape column is the single-capability case of that same rule.
 
 Not every brick needs every adapter. Start with the smallest set that proves a real capability. Avoid bespoke abstractions where the standard library or a mature framework already provides the required primitive.
 
 The Rust-SME-approved [Canonical Brick Standard](../specs/brick-standard/requirements.md) is the mandatory scaffold contract for new or refactored portfolio entries. It defines role eligibility, crate/test layout, inward dependency direction, strict boundary DTO conversion, explicit domain validation, policy-before-effect behavior, safe bounded egress, and binary-owned process lifecycle. It is intentionally Rust-native: `serde` and `schemars` describe bounded transport/configuration DTOs; validated Rust types and core rules own domain validity. The shared transport migration is complete, but the existing Agent, Project, Workflow, and Evaluation MCP libraries retain `serve_stdio()` lifecycle ownership until their separately gated, behavior-preserving server migrations are complete; new and refactored bricks follow the standard immediately.
 
-## Brick portfolio scaffold tracker
+## Brick portfolio registry
 
-GitHub [Issue #9](https://github.com/bannff/Rust-Factory/issues/9) tracks this rollout. The table is the family-level source of truth for taxonomy, mandatory first scaffold, intended mature shape, and implementation state. Every **capability family** that is not already implemented receives the same status-only `<family>-core` tree before it owns behavior; adapter infrastructure, composition bases, and optional domain packs are catalogued here but do not receive fake capability crates.
+GitHub [Issue #11](https://github.com/bannff/Rust-Factory/issues/11) tracks the current taxonomy; it supersedes the scaffold-breadth portion of [Issue #9](https://github.com/bannff/Rust-Factory/issues/9). This table is the family-level source of truth for taxonomy, owning crate, intended mature shape, and implementation state.
+
+**A registry row is the parking space, not an empty crate.** Every capability family has a named owning crate here before any code is written, so a new concern always has an unambiguous home and never accumulates inside an unrelated brick. A family receives an actual package only when the flagship autonomous loop—or another demonstrated consumer—drives it. A row whose state is `Deferred` names its future crate and has no package on disk; creating that package early would freeze a contract that no consumer has yet shaped.
+
+A **status-only** package is the narrow intermediate step for a family that is committed but not yet designed:
 
 ```text
 crates/<family>-core/
@@ -83,38 +91,45 @@ crates/<family>-core/
   tests/public_contract.rs
 ```
 
-A status-only tree has `family`, `role = "core"`, and `status = "scaffolded"` in Cargo metadata; contains only compile-safe status documentation/comments; has no non-stdlib dependencies, public semantic API, or guarantee claim. When a family becomes real, its existing paths gain the typed model, validation, error, port, service, and contract-test contents—agents never need to guess where a concern belongs. The closed package statuses are `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. A deterministic metadata/layout validator enforces this registry through `make check`.
+It has `family`, `role = "core"`, and `status = "scaffolded"` in Cargo metadata; contains only compile-safe status documentation/comments; and has no non-stdlib dependencies, public semantic API, or guarantee claim. When a family becomes real, its existing paths gain the typed model, validation, error, port, service, and contract-test contents—agents never need to guess where a concern belongs.
 
-| Family | Taxonomy | Mandatory first scaffold | Mature shape when justified | Current state |
+Every package in the workspace declares `family`, `role`, and `status` in `[package.metadata.rust-factory]`. The closed roles are `core`, `memory`, `adapter`, `vendor`, `mcp`, `server`, `mesh`, `infrastructure`, and `test-support`. The closed statuses are `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Of the five, only `scaffolded` carries an enforced structural obligation; the rest are declarations of intent and are not guarantees.
+
+`scripts/validate_brick_registry.py` enforces this registry through `make check` in **both** directions: no package may declare a family absent from this table, and no capability family in this table may go undeclared. The validator holds its own declared family list deliberately — it is the independent second statement that this table is checked against, so collapsing the two into one source would make the cross-check tautological and let a bad table edit self-authorize. Adding or retiring a family means editing both, and they must agree.
+
+| Family | Taxonomy | Owning crate | Mature shape when justified | Current state |
 |---|---|---|---|---|
-| Project authoring | Capability | Existing `project-core` migration | `project-core`, `project-fs`, `project-mcp`, `project-server` | Implemented; metadata/lifecycle migration pending |
-| Workspace governance | Capability | `workspace-governance-core` status-only tree | core, Cargo/governance adapters, MCP, server | Scaffolded |
-| Identity / authentication | Capability | `identity-core` status-only tree | core, trusted-host/provider adapters, MCP, server | Scaffolded; process-boundary Policy prerequisite |
-| Policy / authorization | Capability | Existing `policy-core` migration | `policy-core`, local/durable/provider resolvers, MCP, server | Implemented; process-boundary semantics pending (#5) |
-| Agent | Capability | Existing `agent-core` migration | core, model/tool/memory/knowledge/sandbox adapters, MCP, server | Implemented; local server #6 pending |
-| Model gateway | Capability | `model-gateway-core` status-only tree | core, provider adapters, MCP, server | Scaffolded; Agent port exists; independent extraction remains pending |
-| Memory | Capability | `memory-core` status-only tree | core, memory/durable/index adapters, MCP, server | Scaffolded; Agent port extraction requires one-way migration |
-| Knowledge | Capability | `knowledge-core` status-only tree | core, local/index/vector/graph adapters, MCP, server | Scaffolded; Agent port extraction requires one-way migration |
-| Tools / test execution | Capability | `tool-execution-core` status-only tree | core, test/tool adapters, MCP, server | Scaffolded; Agent tool port exists |
-| Sandbox | Capability | `sandbox-core` status-only tree | core, deny/local/confined provider adapters, MCP, server | Scaffolded; deny adapter exists |
-| Workflow | Capability | Existing `workflow-core` migration | `workflow-core`, local/durable adapters, MCP, server | Implemented; durable adapter pending |
-| Evaluation | Capability | Existing `evaluation-core` migration | `evaluation-core`, local/evaluator adapters, MCP, server | Implemented; evaluator portfolio pending |
-| Verification | Capability | `verification-core` status-only tree | core, live-evidence adapters, MCP, server | Scaffolded |
-| Message bus / events | Capability | `message-bus-core` status-only tree | core, local/durable/broker adapters, MCP, server | Scaffolded; separate semantic spec required |
-| Cache | Capability | `cache-core` status-only tree | core, local/Redis-like adapters, MCP, server | Scaffolded; separate semantic spec required |
-| Graph / provenance | Capability | `graph-core` status-only tree | core, local/database adapters, MCP, server | Scaffolded; separate semantic spec required |
-| Observability / audit | Capability | `observability-core` status-only tree | core, logging/tracing/metrics/audit adapters, MCP, server | Scaffolded |
-| Notification | Capability | `notification-core` status-only tree | core, local/provider adapters, MCP, server | Scaffolded |
+| Project authoring | Capability | `project-core` | `project-core`, `project-fs`, `project-mcp`, `project-server` | Implemented; MCP stdio lifecycle migration pending |
+| Policy / authorization | Capability | `policy-core` | `policy-core`, local/durable/provider resolvers, MCP, server | Implemented; process-boundary semantics pending (#5) |
+| Agent | Capability | `agent-core` | core, model/tool/memory/knowledge/sandbox adapters, MCP, server | Implemented; local server #6 pending |
+| Workflow | Capability | `workflow-core` | `workflow-core`, local/durable adapters, MCP, server | Implemented; durable adapter pending |
+| Evaluation | Capability | `evaluation-core` | `evaluation-core`, local/evaluator adapters, MCP, server | Implemented; evaluator portfolio pending |
+| Model gateway | Capability | `model-gateway-core` | core, provider adapters, MCP, server | Scaffolded; provisional `ModelProvider` port stays in `agent-core` until extraction is separately gated |
+| Memory | Capability | `memory-core` | core, memory/durable/index adapters, MCP, server | Scaffolded; provisional `MemoryStore` port stays in `agent-core` until extraction is separately gated |
+| Sandbox | Capability | `sandbox-core` | core, deny/local/confined adapters covering isolated tool and test execution with captured evidence, MCP, server | Scaffolded; provisional `Sandbox` port, `DenySandbox`, and the `ToolRegistry` port stay in `agent-core` |
+| Observability / audit | Capability | `observability-core` | core, logging/tracing/metrics/audit adapters, MCP, server | Scaffolded; no port yet — `agent-core::InvocationEvent` is returned in band, not published |
+| Workspace governance | Capability | `workspace-governance-core` | core, Cargo/governance adapters, MCP, server | Deferred; the `make check` validator covers this ground for now |
+| Identity / authentication | Capability | `identity-core` | core, trusted-host/provider adapters, MCP, server | Deferred; process-boundary Policy (#5) is a prerequisite and local single-process operation needs no principal authentication |
+| Knowledge | Capability | `knowledge-core` | core, local/index/vector/graph adapters, MCP, server | Deferred; the `KnowledgeStore` port and `StaticKnowledgeStore` remain owned by `agent-core` |
+| Verification | Capability | `verification-core` | core, attestation/provenance/reproducibility adapters, MCP, server | Deferred; a live-fact check is not a capability — Evaluation owns acceptance and Observability owns evidence. Justified only by signed attestation, provenance chains, or reproducible-artifact proof across multiple consumers |
+| Message bus / events | Capability | `message-bus-core` | core, local/durable/broker adapters, MCP, server | Deferred; no `MessageBus` port exists and a separate semantic spec is required |
+| Cache | Capability | `cache-core` | core, local/Redis-like adapters, MCP, server | Deferred; separate semantic spec required. Distinct from storage: a cache may lose everything at restart without being wrong |
+| Graph / provenance | Capability | `graph-core` | core, local/database adapters, MCP, server | Deferred; separate semantic spec required |
+| Notification | Capability | `notification-core` | core, local/provider adapters, MCP, server | Deferred; separate semantic spec required |
 | Configuration | Adapter infrastructure | No capability crate; server config modules | bounded config-source adapters owned by composition binaries | Agent server config specified |
 | Storage | Adapter infrastructure | No generic storage crate | capability-owned persistence ports and adapters | Local adapters exist; generic facade prohibited |
 | HTTP / integrations | Adapter infrastructure | No capability crate | consumed-port remote/integration adapters | Deferred pending #5 |
 | Browser automation | Optional capability/domain pack | `browser-core` only when an approved automation contract exists | core, bounded browser adapters, MCP, server | Optional; not scaffolded |
-| MCP transport | Adapter infrastructure | Existing `mcp-transport` migration | bounded server transport adapter only | Implemented; lifecycle migration pending in consumers |
-| MCP / API / worker / edge | Composition bases | No core scaffold | selected binary roots plus config/composition modules | Agent server #6 specified; others pending |
+| MCP transport | Adapter infrastructure | `mcp-transport` | bounded server transport adapter plus shared registration, schema, and error-projection helpers that keep each `-mcp` crate thin | Implemented; lifecycle migration pending in consumers |
+| MCP / API / worker / edge | Composition bases | No core; one binary crate per deployable under `projects/<name>/` | selected binary roots plus config/composition modules | Agent server #6 specified; `projects/` not yet created |
 | Data / learning | Optional domain packs | Portfolio registry only until a concrete product contract exists | dataset/ML/learning capability families | Deferred |
 | Security, payments, blockchain, games, UI, OpenArcade | Optional domain packs | Portfolio registry only | product-specific composition from generic seams | Excluded from generic core contracts |
 
-A mature role is instantiated only after its own eligibility is met: `-memory` after a concrete stateful core port; `-<vendor>` to implement an existing port; `-mcp` after a bounded operational surface; `-server` after topology/configuration is specified; and `-mesh` only after a dedicated process-boundary specification. Existing packages migrate behavior-preservingly to this metadata/layout standard. Project Blueprint V1 remains a single-package generator and SHALL NOT stamp family scaffolds; a separately approved successor will do so.
+A mature role is instantiated only after its own eligibility is met: `-memory` after a concrete stateful core port; `-adapter`/`-<vendor>` to implement an existing port; `-mcp` after a bounded operational surface; `-server` after topology/configuration is specified; and `-mesh` only after a dedicated process-boundary specification. Existing packages migrate behavior-preservingly to this metadata/layout standard. Project Blueprint V1 remains a single-package generator and SHALL NOT stamp family scaffolds; a separately approved successor will do so.
+
+Libraries live under `crates/` and never declare a binary target. Deployable binaries live under `projects/<name>/`, carry `role = "server"`, and are the only packages that own a process: Tokio startup, transport binding, configuration, host-derived trusted context, Policy resolver construction, concrete adapter injection, and orderly shutdown. A project composes only the bricks it needs—there is no aggregate binary that must host every capability.
+
+Each agent-operable capability owns its own bounded `-mcp` adapter crate so a brick remains an independently deployable unit with its own tool namespace, schema, authorization scope, and failure containment; a mesh node compiles in the bricks it needs. MCP is deliberately **not** folded into the capability crate behind a Cargo feature: features are additive, so a framework-free build cannot be guaranteed once any sibling in the build graph enables the MCP feature, feature-gated public API couples core versioning to `rmcp`, and boundary DTO derives would land on domain types. The adapter is a plug, not part of the appliance. In-process brick-to-brick calls use the consumed port trait directly and never round-trip through MCP.
 
 ## Delivery order
 

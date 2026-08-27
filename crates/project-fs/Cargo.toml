@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[package.metadata.rust-factory]
+family = "project"
+role = "adapter"
+status = "implemented"
+
 [dependencies]
 cap-std.workspace = true
 project-core = { path = "../project-core", version = "=0.1.0" }

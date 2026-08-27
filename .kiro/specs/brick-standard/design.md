@@ -27,7 +27,7 @@ core                                   ──>  another capability only through 
 
 ## Mandatory scaffold package shape
 
-Every approved capability family receives this agent-maintainable status-only core tree before it owns real behavior. It is intentionally uniform so agents can enumerate and fill the same responsibility paths deterministically.
+A capability family that is committed but not yet designed may use this agent-maintainable status-only core tree as a bounded intermediate step. It is intentionally uniform so agents can enumerate and fill the same responsibility paths deterministically. A family with no demonstrated consumer receives no package at all — it stays a registry row naming its future crate.
 
 ```text
 crates/<brick>-core/
@@ -47,12 +47,12 @@ A status-only tree has only documentation/comments, compiles, has zero non-stdli
 
 ```toml
 [package.metadata.rust-factory]
-family = "cache"
+family = "sandbox"
 role = "core"
 status = "scaffolded"
 ```
 
-The closed package-status set is `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Crate-level documentation mirrors those fields; the Vision table remains the family-level registry. A metadata/layout validator must reject unknown roles/statuses, a missing required path, invalid role-family combinations, forbidden status-only dependencies, and disagreement with the family registry.
+The closed role set is `core`, `memory`, `adapter`, `vendor`, `mcp`, `server`, `mesh`, `infrastructure`, and `test-support`. The closed package-status set is `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Crate-level documentation mirrors those fields; the Vision registry remains the family-level source of truth. `scripts/validate_brick_registry.py` enforces this for every package: it rejects a missing or malformed metadata record, unknown or unregistered families, unknown roles/statuses, a missing or extra status-only path, non-comment status-only source, forbidden status-only dependencies and target/feature configuration, canonical scaffold path mismatches, binary targets under `crates/`, `role = "server"` disagreeing with residence under `projects/`, unlisted or phantom workspace members, package directories without a manifest, and registry disagreement in either direction.
 
 ## Mature role shape
 

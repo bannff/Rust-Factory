@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test scaffold-check check
+.PHONY: fmt fmt-check lint test registry-check check
 
 fmt:
 	cargo fmt --all
@@ -12,8 +12,8 @@ lint:
 test:
 	cargo test --workspace
 
-scaffold-check:
-	python3 -m unittest scripts/test_validate_status_only_scaffolds.py
-	python3 scripts/validate_status_only_scaffolds.py
+registry-check:
+	python3 -m unittest scripts/test_validate_brick_registry.py
+	python3 scripts/validate_brick_registry.py
 
-check: scaffold-check fmt-check lint test
+check: registry-check fmt-check lint test

@@ -14,19 +14,10 @@ members = [
     "crates/evaluation-core",
     "crates/evaluation-memory",
     "crates/evaluation-mcp",
-    "crates/workspace-governance-core",
-    "crates/identity-core",
     "crates/model-gateway-core",
     "crates/memory-core",
-    "crates/knowledge-core",
-    "crates/tool-execution-core",
     "crates/sandbox-core",
-    "crates/verification-core",
-    "crates/message-bus-core",
-    "crates/cache-core",
-    "crates/graph-core",
     "crates/observability-core",
-    "crates/notification-core",
 ]
 resolver = "3"
 

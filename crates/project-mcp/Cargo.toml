@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[package.metadata.rust-factory]
+family = "project"
+role = "mcp"
+status = "migration-pending"
+
 [dependencies]
 anyhow.workspace = true
 mcp-transport = { path = "../mcp-transport", version = "=0.1.0" }

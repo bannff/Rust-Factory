@@ -629,6 +629,13 @@ pub struct ModelResponse {
     pub capability_requests: Vec<CapabilityRequest>,
 }
 /// Model-provider port.
+///
+/// Provisional pre-extraction port. The Model gateway family owns this contract
+/// in the portfolio registry, but the port stays here until extraction is
+/// separately gated: [`ModelRequest`] carries agent-specific identity and
+/// resolved policy scope, and [`ModelResponse`] carries [`CapabilityRequest`],
+/// which couples the memory, knowledge, and sandbox families to this type.
+/// Moving it to `model-gateway-core` unchanged would freeze that coupling.
 pub trait ModelProvider: Send + Sync {
     fn invoke(&self, request: ModelRequest) -> Result<ModelResponse, DefinitionError>;
 }
@@ -644,6 +651,12 @@ pub struct ToolRequest {
     pub capability_scope: ResolvedCapabilityScope,
     pub input: String,
 }
+/// Tool-registry port.
+///
+/// Owned by the Agent family by design, not pending extraction: the tools an
+/// agent may call are part of its definition and authorization scope. Isolated
+/// execution of a tool or test with captured evidence is a separate concern
+/// that belongs to the Sandbox family.
 pub trait ToolRegistry: Send + Sync {
     fn resolve(&self, id: &str) -> Result<ToolDescriptor, DefinitionError>;
     fn invoke(
@@ -660,6 +673,12 @@ pub struct MemoryRequest {
     pub query: String,
     pub limit: u32,
 }
+/// Memory port.
+///
+/// Provisional pre-extraction port owned in the registry by the Memory family.
+/// It is deliberately anemic — untyped values with no namespaces, keys,
+/// eviction, or tenancy — so a durable contract is net-new design rather than a
+/// move. It stays here until a consumer beyond [`LocalAgentRuntime`] shapes it.
 pub trait MemoryStore: Send + Sync {
     fn recall(&self, request: MemoryRequest) -> Result<Vec<String>, DefinitionError>;
     fn write(&self, request: MemoryRequest, value: String) -> Result<(), DefinitionError>;
@@ -672,6 +691,11 @@ pub struct KnowledgeRequest {
     pub query: String,
     pub limit: u32,
 }
+/// Knowledge-retrieval port.
+///
+/// Owned here while the Knowledge family is deferred in the portfolio registry.
+/// The registry names `knowledge-core` as its future home; no package exists
+/// until a demonstrated consumer drives one.
 pub trait KnowledgeStore: Send + Sync {
     fn search(&self, request: KnowledgeRequest) -> Result<Vec<String>, DefinitionError>;
 }
@@ -683,6 +707,13 @@ pub struct SandboxRequest {
     pub action: String,
     pub arguments: Vec<String>,
 }
+/// Sandbox-execution port.
+///
+/// Provisional pre-extraction port owned in the registry by the Sandbox family,
+/// which will also own isolated tool and test execution with captured evidence.
+/// This is the cleanest extraction candidate of the four because its request
+/// payload is nearly domain-neutral; only the agent identity and resolved scope
+/// fields need a neutral principal type first.
 pub trait Sandbox: Send + Sync {
     fn execute(&self, request: SandboxRequest) -> Result<String, DefinitionError>;
 }

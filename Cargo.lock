@@ -101,10 +101,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
-name = "cache-core"
-version = "0.1.0"
-
-[[package]]
 name = "cap-primitives"
 version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -433,10 +429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "graph-core"
-version = "0.1.0"
-
-[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -471,10 +463,6 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
-
-[[package]]
-name = "identity-core"
-version = "0.1.0"
 
 [[package]]
 name = "indexmap"
@@ -534,10 +522,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "knowledge-core"
-version = "0.1.0"
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,15 +574,7 @@ name = "memory-core"
 version = "0.1.0"
 
 [[package]]
-name = "message-bus-core"
-version = "0.1.0"
-
-[[package]]
 name = "model-gateway-core"
-version = "0.1.0"
-
-[[package]]
-name = "notification-core"
 version = "0.1.0"
 
 [[package]]
@@ -1085,10 +1061,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tool-execution-core"
-version = "0.1.0"
-
-[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1147,10 +1119,6 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "verification-core"
-version = "0.1.0"
 
 [[package]]
 name = "version_check"
@@ -1477,10 +1445,6 @@ dependencies = [
  "agent-core",
  "workflow-core",
 ]
-
-[[package]]
-name = "workspace-governance-core"
-version = "0.1.0"
 
 [[package]]
 name = "zerocopy"

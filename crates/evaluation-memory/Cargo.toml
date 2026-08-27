@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[package.metadata.rust-factory]
+family = "evaluation"
+role = "memory"
+status = "implemented"
+
 [dependencies]
 evaluation-core = { path = "../evaluation-core", version = "=0.1.0" }
 workflow-core = { path = "../workflow-core", version = "=0.1.0" }

@@ -7,5 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[package.metadata.rust-factory]
+family = "project"
+role = "core"
+status = "implemented"
+
 [lints]
 workspace = true

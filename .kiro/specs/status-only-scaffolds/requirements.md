@@ -2,6 +2,21 @@
 
 GitHub issue: #9
 
+> **Superseded in part by [Issue #11](https://github.com/bannff/Rust-Factory/issues/11).**
+> This spec was delivered as written, then revised. Requirement 1's 13-family
+> enumeration no longer holds: 9 of those families own no package. Only
+> `model-gateway-core`, `memory-core`, `sandbox-core`, and `observability-core`
+> remain as status-only trees; `workspace-governance`, `identity`, `knowledge`,
+> `verification`, `message-bus`, `cache`, `graph`, and `notification` are
+> registry rows naming a future crate, and `tool-execution` folded into
+> Sandbox. Requirements 2, 3, and 5 remain in force for any package that is
+> status-only. Requirement 4's validator was generalized to cover every
+> workspace package and to check the registry in both directions; it now lives
+> at `scripts/validate_brick_registry.py`. The
+> [Vision portfolio registry](../../steering/living-factory-vision.md#brick-portfolio-registry)
+> and the [Canonical Brick Standard](../brick-standard/requirements.md) are
+> authoritative.
+
 Create the first mandatory, agent-maintainable status-only core scaffold rollout. This batch establishes fixed package paths and machine-readable metadata without inventing domain contracts or adapter behavior.
 
 1. Add root workspace members `workspace-governance-core`, `identity-core`, `model-gateway-core`, `memory-core`, `knowledge-core`, `tool-execution-core`, `sandbox-core`, `verification-core`, `message-bus-core`, `cache-core`, `graph-core`, `observability-core`, and `notification-core`.

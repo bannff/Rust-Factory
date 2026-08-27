@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[package.metadata.rust-factory]
+family = "mcp-transport"
+role = "infrastructure"
+status = "implemented"
+
 [dependencies]
 futures = "=0.3.34"
 rmcp.workspace = true

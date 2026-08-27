@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[package.metadata.rust-factory]
+family = "evaluation"
+role = "mcp"
+status = "migration-pending"
+
 [dependencies]
 anyhow.workspace = true
 evaluation-core = { path = "../evaluation-core", version = "=0.1.0" }

@@ -17,7 +17,9 @@ Rust Factory is a domain-agnostic foundation for reliable Rust services, librari
 - `crates/evaluation-core` — deterministic immutable evaluation contracts for terminal workflow evidence.
 - `crates/evaluation-memory` — deterministic process-local, in-memory evidence reader and result store; no persistence or cross-process durability guarantees.
 - `crates/evaluation-mcp` — bounded MCP evaluation controls.
-- `crates/{workspace-governance,identity,model-gateway,memory,knowledge,tool-execution,sandbox,verification,message-bus,cache,graph,observability,notification}-core` — mandatory zero-dependency status-only capability scaffolds; see the [Vision portfolio matrix](.kiro/steering/living-factory-vision.md#brick-portfolio-scaffold-tracker) for their taxonomy and mature shapes.
+- `crates/{model-gateway,memory,sandbox,observability}-core` — zero-dependency status-only scaffolds for the four capability families the autonomous loop drives next; their provisional ports still live in `agent-core`.
+
+Every package declares `family`, `role`, and `status` in `[package.metadata.rust-factory]`, and the [Vision portfolio registry](.kiro/steering/living-factory-vision.md#brick-portfolio-registry) is the family-level source of truth. Capabilities that are committed but not yet driven by a consumer — workspace governance, identity, knowledge, verification, message bus, cache, graph, notification — are registry rows naming a future crate rather than empty packages, so a new concern always has a designated home without shipping code that does nothing. `make check` enforces registry and metadata agreement in both directions.
 - `.kiro/skills` — shared Rust guidance for all agent roles.
 - `.kiro/specs/rust-factory-foundation` — the first capability-oriented migration plan.
 

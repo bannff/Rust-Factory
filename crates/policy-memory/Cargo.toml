@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[package.metadata.rust-factory]
+family = "policy"
+role = "memory"
+status = "implemented"
+
 [dependencies]
 policy-core = { path = "../policy-core", version = "=0.1.0" }
 
