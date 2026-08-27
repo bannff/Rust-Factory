@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+mcp-transport = { path = "../mcp-transport", version = "=0.1.0" }
 project-core = { path = "../project-core", version = "=0.1.0" }
 rmcp.workspace = true
 schemars.workspace = true

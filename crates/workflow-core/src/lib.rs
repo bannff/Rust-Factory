@@ -976,6 +976,88 @@ fn reject_duplicate_keys(input: &str) -> Result<(), WorkflowError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+
+    #[derive(Clone, Debug)]
+    enum TestJson {
+        Null,
+        Bool(bool),
+        Number(u16),
+        String(String),
+        Array(Vec<Self>),
+        Object(BTreeMap<String, Self>),
+    }
+
+    fn json_value_strategy() -> BoxedStrategy<TestJson> {
+        let scalar = prop_oneof![
+            Just(TestJson::Null),
+            any::<bool>().prop_map(TestJson::Bool),
+            (0_u16..=10_000).prop_map(TestJson::Number),
+            prop::collection::vec(0_u8..36, 0..=8).prop_map(|characters| {
+                TestJson::String(
+                    characters
+                        .into_iter()
+                        .map(|character| match character {
+                            0..=25 => char::from(b'a' + character),
+                            _ => char::from(b'0' + character - 26),
+                        })
+                        .collect(),
+                )
+            }),
+        ];
+        scalar
+            .prop_recursive(3, 128, 4, |inner| {
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..=4).prop_map(TestJson::Array),
+                    prop::collection::vec((0_u8..8, inner), 0..=4).prop_map(|entries| {
+                        TestJson::Object(
+                            entries
+                                .into_iter()
+                                .map(|(key, value)| (format!("key{key}"), value))
+                                .collect(),
+                        )
+                    }),
+                ]
+            })
+            .boxed()
+    }
+
+    fn render_json(value: &TestJson, reverse_objects: bool) -> String {
+        match value {
+            TestJson::Null => "null".to_owned(),
+            TestJson::Bool(value) => value.to_string(),
+            TestJson::Number(value) => value.to_string(),
+            TestJson::String(value) => serde_json::to_string(value).expect("JSON string"),
+            TestJson::Array(values) => format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(|value| render_json(value, reverse_objects))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            TestJson::Object(values) => {
+                let mut entries = values.iter().collect::<Vec<_>>();
+                if reverse_objects {
+                    entries.reverse();
+                }
+                format!(
+                    "{{{}}}",
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| format!(
+                            "{}:{}",
+                            serde_json::to_string(key).expect("JSON key"),
+                            render_json(value, reverse_objects)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            }
+        }
+    }
+
     #[test]
     fn canonical_json_sorts_nested_keys_and_rejects_duplicates() {
         assert_eq!(
@@ -988,10 +1070,36 @@ mod tests {
         );
         assert!(canonical_json(r#"{"a":1,"a":2}"#, MAX_JSON_INPUT_BYTES).is_err());
     }
+
     #[test]
     fn canonical_digest_is_stable_across_object_order() {
         let first = canonical_json(r#"{"a":1,"b":2}"#, MAX_JSON_INPUT_BYTES).expect("first");
         let second = canonical_json(r#"{"b":2,"a":1}"#, MAX_JSON_INPUT_BYTES).expect("second");
         assert_eq!(input_digest(&first), input_digest(&second));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn canonical_json_and_digest_are_invariant_to_object_order(input in json_value_strategy()) {
+            let first_input = render_json(&input, false);
+            let second_input = render_json(&input, true);
+            prop_assert!(first_input.len() <= 4 * 1024);
+            prop_assert!(second_input.len() <= 4 * 1024);
+
+            let first = canonical_json(&first_input, 4 * 1024).expect("first canonical JSON");
+            let second = canonical_json(&second_input, 4 * 1024).expect("second canonical JSON");
+            prop_assert_eq!(&first, &second);
+            prop_assert_eq!(input_digest(&first), input_digest(&second));
+            prop_assert_eq!(
+                canonical_json(&first, 4 * 1024).expect("canonical JSON is idempotent"),
+                first
+            );
+        }
     }
 }

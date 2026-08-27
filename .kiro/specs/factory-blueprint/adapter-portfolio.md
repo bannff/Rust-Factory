@@ -10,6 +10,14 @@ Selections are declarative planning data only. Planning validates unique selecti
 
 Rust Factory SHALL NOT use runtime plugin loading, dynamic crate discovery, a global service locator, or an implicit universal adapter registry. Cargo resolution and compile-time constructor wiring are the composition authority. A framework is contained in a named adapter crate (`<brick>-<framework>`) or an experiment crate; it never becomes a dependency of the core merely because a project selected it.
 
+## Execution topology
+
+MCP adapters remain library crates that translate bounded control-plane tools to injected typed ports. An optional `<brick>-server` binary is the outer composition root for one process: it loads deployment configuration, constructs trusted context and Policy dependencies, selects concrete adapters, binds the chosen transport, and starts the MCP library. It does not define a second capability contract.
+
+Local and edge composition call typed consumed-core ports directly. A remote client adapter may implement a consumed port over a chosen protocol only after a dedicated process-boundary specification defines independently derived receiving identity, authorization, request/result bounds, idempotency, cancellation/deadline behavior, evidence, and recovery guarantees. MCP is one candidate protocol for such an adapter, not the universal inter-brick runtime protocol.
+
+A shared `mcp-transport` crate is allowed only as a narrow adapter around the demonstrated repeated bounded MCP framing contract. It may depend on rmcp and Tokio, but no core crate may. It does not become a runtime registry or a deployment framework. The [Canonical Brick Standard](../brick-standard/requirements.md) governs package roles, closed DTO conversion, core validation, safe output projection, and server-owned lifecycle for every portfolio scaffold.
+
 ## Experiments
 
 An experiment is a bounded, reproducible composition of existing typed ports, adapter selections, inputs, and measurement plan. It may run a candidate orchestration, model/provider, sandbox, storage, UI, or evaluation harness, but it must not create a competing source of Workflow lifecycle state.

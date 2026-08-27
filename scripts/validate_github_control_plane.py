@@ -25,7 +25,6 @@ REQUIRED_LABELS = {
     *(
         f"area/{name}"
         for name in (
-            "factory-core",
             "project",
             "agent",
             "workflow",

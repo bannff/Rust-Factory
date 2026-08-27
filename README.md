@@ -4,7 +4,6 @@ Rust Factory is a domain-agnostic foundation for reliable Rust services, librari
 
 ## Workspace
 
-- `crates/factory-core` — shared Factory primitives, intentionally minimal until a second brick needs them.
 - `crates/project-core` — deterministic project-blueprint validation and generation planning.
 - `crates/project-fs` — root-confined project materialization.
 - `crates/project-mcp` — bounded MCP project tools.
@@ -18,8 +17,15 @@ Rust Factory is a domain-agnostic foundation for reliable Rust services, librari
 - `crates/evaluation-core` — deterministic immutable evaluation contracts for terminal workflow evidence.
 - `crates/evaluation-memory` — deterministic process-local, in-memory evidence reader and result store; no persistence or cross-process durability guarantees.
 - `crates/evaluation-mcp` — bounded MCP evaluation controls.
+- `crates/{workspace-governance,identity,model-gateway,memory,knowledge,tool-execution,sandbox,verification,message-bus,cache,graph,observability,notification}-core` — mandatory zero-dependency status-only capability scaffolds; see the [Vision portfolio matrix](.kiro/steering/living-factory-vision.md#brick-portfolio-scaffold-tracker) for their taxonomy and mature shapes.
 - `.kiro/skills` — shared Rust guidance for all agent roles.
 - `.kiro/specs/rust-factory-foundation` — the first capability-oriented migration plan.
+
+Shared capability contracts are introduced only as narrowly named, transport-independent cores after a demonstrated stable contract has at least two consumers. The extracted core becomes canonical; consumers depend inward on it. Rust Factory intentionally has no generic umbrella core.
+
+## Brick standard
+
+New or refactored bricks follow the Rust-SME-approved [Canonical Brick Standard](.kiro/specs/brick-standard/requirements.md). A capability owns a small framework-free `-core`; deterministic local state belongs in an optional `-memory` adapter; MCP is an optional bounded `-mcp` adapter library; and an optional `-server` binary owns runtime, transport, configuration, trusted context, Policy composition, concrete adapters, and shutdown. Boundary DTOs use `serde` and `schemars`; typed constructors and core `validate_*` rules establish domain validity. The standard also tracks the behavior-preserving migration that removes stdio lifecycle ownership from existing MCP libraries.
 
 ## Quality gate
 

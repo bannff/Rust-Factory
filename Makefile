@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test check
+.PHONY: fmt fmt-check lint test scaffold-check check
 
 fmt:
 	cargo fmt --all
@@ -12,4 +12,8 @@ lint:
 test:
 	cargo test --workspace
 
-check: fmt-check lint test
+scaffold-check:
+	python3 -m unittest scripts/test_validate_status_only_scaffolds.py
+	python3 scripts/validate_status_only_scaffolds.py
+
+check: scaffold-check fmt-check lint test

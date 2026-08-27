@@ -12,5 +12,8 @@ agent-core = { path = "../agent-core", version = "=0.1.0" }
 serde_json.workspace = true
 sha2 = "=0.10.9"
 
+[dev-dependencies]
+proptest.workspace = true
+
 [lints]
 workspace = true

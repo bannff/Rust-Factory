@@ -6,14 +6,13 @@
 
 //! Bounded MCP control-plane adapter for evaluation operations.
 
-mod stdio_transport;
-
 use anyhow::{Context, Result};
 use evaluation_core::{
     CriterionV1, EvaluationDefinitionV1, EvaluationError, EvaluationStore, LogicalEvaluationKey,
     WorkflowEvidenceReader, definition_digest, evaluate_and_store, validate_definition,
     validate_logical_key,
 };
+use mcp_transport::BoundedStdioTransport;
 use policy_core::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
@@ -26,7 +25,6 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stdio_transport::BoundedStdioTransport;
 
 pub const EVALUATION_TOOLS: [&str; 3] = [
     "evaluation_validate",

@@ -5,8 +5,8 @@ No framework belongs in every brick. Cores use typed Rust models, explicit valid
 | Boundary | Preferred primitive | Rule |
 |---|---|---|
 | Semantic canonical input | serde_json exception | permitted in core only for specified canonical semantic input; no serde boundary types in public API |
-| Serialization/ingress | serde, serde_json | adapter types and MCP inputs/outputs |
-| External schemas/MCP | schemars, rmcp | MCP adapters only |
+| Serialization/ingress | serde, serde_json | closed adapter DTOs (`deny_unknown_fields` unless an extension map is specified), private conversion, and explicit raw/semantic bounds |
+| External schemas/MCP | schemars, rmcp | discovery/shape documentation at MCP adapters only; schema success is not domain validation or authorization |
 | Filesystem confinement | cap-std | filesystem adapter only |
 | Stable library errors | thiserror candidate | only if repeated error boilerplate justifies it |
 | Operational context | anyhow | binaries/adapters only, never public core errors |
@@ -17,6 +17,10 @@ No framework belongs in every brick. Cores use typed Rust models, explicit valid
 | Async | Tokio | real concurrent-I/O adapters only |
 
 Cargo features default to minimal core behavior. Optional provider/persistence/mesh integrations belong to adapter crates or adapter-owned opt-in features; cores must not expose framework feature choices. Every dependency needs Rust SME approval, exact pin, concrete gap, and contained ownership.
+
+## Transport and composition boundaries
+
+`mcp-transport` is an adapter-only crate when repeated bounded framing behavior has at least two consumers. It may contain rmcp, Tokio, futures, and codec dependencies; cores may not. `<brick>-server` binaries are composition roots and own runtime lifecycle, transport binding, configuration, host-derived trusted context, Policy construction, concrete adapter selection, logging initialization, and shutdown. `<brick>-mcp` remains a reusable bounded adapter library: for new or refactored bricks it must accept an injected transport/service lifecycle and must not read stdio, construct `BoundedStdioTransport`, or choose Tokio process lifecycle. The existing Agent, Project, Workflow, and Evaluation MCP libraries already use the shared bounded transport but retain `serve_stdio()` lifecycle ownership until separately gated behavior-preserving server migrations complete. Internal execution remains typed Rust port calls; remote client adapters and async-port migrations require separate demonstrated-need specifications.
 
 ## Portfolio selection and experiments
 

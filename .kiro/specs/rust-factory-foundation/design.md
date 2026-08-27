@@ -12,11 +12,8 @@ project core ──> ValidationReport + GenerationPlan
       │                              │
       │                              ├── MCP adapter: validate / plan / generate
       │                              └── filesystem adapter: safe materialization
-      ▼
-factory-core: shared identifiers, errors, and stable contracts
 ```
 
-- `crates/factory-core` — future shared Factory primitives; intentionally minimal in this slice.
 - `crates/project-core` — blueprint, validation, planning, and writer-port contracts.
 - `crates/project-fs` — root-confined filesystem materialization.
 - `crates/project-mcp` — bounded MCP adapter using the official `rmcp` SDK.

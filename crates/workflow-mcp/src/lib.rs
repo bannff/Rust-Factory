@@ -5,10 +5,9 @@
 
 //! Bounded MCP control-plane adapter for workflow operations.
 
-mod stdio_transport;
-
 use agent_core::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
 use anyhow::{Context, Result};
+use mcp_transport::BoundedStdioTransport;
 use policy_core::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
@@ -21,7 +20,6 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use stdio_transport::BoundedStdioTransport;
 use workflow_core::{
     AgentInvoker, AgentStep, InvocationPolicy, LogicalId, MAX_JSON_INPUT_BYTES, MAX_RUN_KEY_BYTES,
     PublicErrorCode, RequestContext, RunSummary, TerminalReason, WorkflowBudget,

@@ -1,6 +1,6 @@
 # Tasks: Rust Factory Foundation
 
-- [x] 1. Create the Cargo workspace, `factory-core` crate, and workspace lint policy.
+- [x] 1. Establish the Cargo workspace and workspace lint policy. The initial `factory-core` placeholder was removed in the focused no-consumer cleanup tracked by GitHub issue #2.
 - [x] 2. Add shared Rust fundamentals, architecture, quality, and async guidance.
 - [x] 3. Add the local and CI quality gates.
 - [x] 4. Define the first product slice as an MCP-exposed project brick.

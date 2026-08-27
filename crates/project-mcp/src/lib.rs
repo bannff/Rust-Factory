@@ -6,6 +6,7 @@
 use std::error::Error;
 
 use anyhow::{Context, Result};
+use mcp_transport::BoundedStdioTransport;
 use project_core::{
     DefaultProjectAuthor, FindingSeverity, ProjectAuthor, ProjectBlueprint, ProjectKind,
     ProjectTarget, ProjectWriter, ValidationCode,
@@ -14,7 +15,6 @@ use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     tool, tool_handler, tool_router,
-    transport::stdio,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -110,7 +110,13 @@ where
     ///
     /// Returns an error when the stdio transport cannot start or terminates unexpectedly.
     pub async fn serve_stdio(self) -> Result<()> {
-        self.serve(stdio()).await?.waiting().await?;
+        self.serve(BoundedStdioTransport::new(
+            tokio::io::stdin(),
+            tokio::io::stdout(),
+        ))
+        .await?
+        .waiting()
+        .await?;
         Ok(())
     }
 

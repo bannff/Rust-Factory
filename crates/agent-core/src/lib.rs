@@ -1127,6 +1127,7 @@ fn digest_scope(scope: &ResolvedCapabilityScope) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::sync::Arc;
     fn catalog() -> StaticReferenceCatalog {
         StaticReferenceCatalog::new(
@@ -1592,6 +1593,99 @@ mod tests {
                 communication_allowed: false,
             }
         );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn effective_ceiling_intersection_is_order_independent_and_non_elevating(
+            definition_indices in prop::collection::vec(0_u8..8, 0..=16),
+            ceiling_indices in prop::collection::vec(0_u8..8, 0..=16),
+            capability_flags in prop::array::uniform4(any::<(bool, bool)>())
+        ) {
+            let [(definition_memory, ceiling_memory),
+                (definition_knowledge, ceiling_knowledge),
+                (definition_sandbox, ceiling_sandbox),
+                (definition_communication, ceiling_communication)] = capability_flags;
+            let definition_tools = definition_indices
+                .iter()
+                .map(|index| format!("tool{index}"))
+                .collect::<Vec<_>>();
+            let mut value = definition(
+                "agent",
+                definition_tools.iter().map(String::as_str).collect(),
+            );
+            value.memory = MemoryPolicy {
+                enabled: definition_memory,
+                max_items: u32::from(definition_memory),
+            };
+            value.knowledge = KnowledgePolicy {
+                enabled: definition_knowledge,
+                max_results: u32::from(definition_knowledge),
+            };
+            value.sandbox.allow_execution = definition_sandbox;
+            value.communication.allow_messages = definition_communication;
+            prop_assert_eq!(validate_definition(&value), Ok(()));
+
+            let ceiling = EffectiveCapabilityCeilingV1 {
+                allowed_tool_ids: ceiling_indices
+                    .iter()
+                    .map(|index| format!("tool{index}"))
+                    .collect(),
+                memory_enabled: ceiling_memory,
+                knowledge_enabled: ceiling_knowledge,
+                sandbox_execution_allowed: ceiling_sandbox,
+                communication_allowed: ceiling_communication,
+            };
+            prop_assert_eq!(validate_effective_capability_ceiling(&ceiling), Ok(()));
+
+            let intersection = ceiling.intersect(&value).expect("intersection");
+            let expected_tools = definition_indices
+                .iter()
+                .filter(|index| ceiling_indices.contains(index))
+                .map(|index| format!("tool{index}"))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            prop_assert_eq!(&intersection.allowed_tool_ids, &expected_tools);
+            prop_assert!(intersection.allowed_tool_ids.windows(2).all(|pair| pair[0] < pair[1]));
+            let all_tools_are_shared = intersection.allowed_tool_ids.iter().all(|tool_id| {
+                value.allowed_tool_ids.contains(tool_id) && ceiling.allowed_tool_ids.contains(tool_id)
+            });
+            prop_assert!(all_tools_are_shared);
+            prop_assert_eq!(intersection.memory_enabled, definition_memory && ceiling_memory);
+            prop_assert_eq!(intersection.knowledge_enabled, definition_knowledge && ceiling_knowledge);
+            prop_assert_eq!(
+                intersection.sandbox_execution_allowed,
+                definition_sandbox && ceiling_sandbox
+            );
+            prop_assert_eq!(
+                intersection.communication_allowed,
+                definition_communication && ceiling_communication
+            );
+
+            let mut reordered_definition = value.clone();
+            reordered_definition.allowed_tool_ids.reverse();
+            reordered_definition
+                .allowed_tool_ids
+                .extend(value.allowed_tool_ids.clone());
+            let mut reordered_ceiling = ceiling.clone();
+            reordered_ceiling.allowed_tool_ids.reverse();
+            reordered_ceiling
+                .allowed_tool_ids
+                .extend(ceiling.allowed_tool_ids.clone());
+            prop_assert_eq!(
+                reordered_ceiling
+                    .intersect(&reordered_definition)
+                    .expect("reordered intersection"),
+                intersection
+            );
+        }
     }
 
     #[test]

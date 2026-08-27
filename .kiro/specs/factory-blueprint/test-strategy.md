@@ -12,3 +12,5 @@
 Python mapping: Pydantic ingress/egress → typed Rust models plus serde/schemars at adapters; Hypothesis → proptest where invariant input space is meaningful; chaos/concurrency → deterministic race tests and loom only for synchronization; pytest fixtures → Rust builders/fixtures; immutable records → golden canonical bytes and SHA-256 vectors.
 
 Each brick spec names its required narrow Cargo command and marks all other techniques as N/A with rationale. Local/in-memory adapters never imply production durability, recovery, or cross-process behavior.
+
+Initial property suite: `proptest = "=1.6.0"` is test-only in `agent-core` and `workflow-core`. Its 64-case, failure-persistence-free properties cover Agent capability-ceiling non-elevation/canonicality and Workflow bounded canonical-JSON ordering/digest fixed points. Golden vectors and deterministic state/race tests remain required rather than being replaced by generated tests.

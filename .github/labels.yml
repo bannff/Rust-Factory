@@ -41,9 +41,6 @@ labels:
   - name: priority/low
     color: "0E8A16"
     description: Lower-impact work.
-  - name: area/factory-core
-    color: "5319E7"
-    description: Shared Factory primitives.
   - name: area/project
     color: "006B75"
     description: Project blueprint, filesystem, or project MCP work.
