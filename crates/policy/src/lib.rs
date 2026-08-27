@@ -3,6 +3,17 @@
 #![allow(clippy::missing_errors_doc)]
 
 //! Transport-independent trusted context and capability grant policy contracts.
+//!
+//! A deterministic process-local resolver lives in [`memory`], behind the
+//! `memory` feature.
+//!
+//! This brick has no MCP surface by design. It decides what an agent is
+//! permitted to do, so exposing it to agents would be a privilege-escalation
+//! seam: authorizing through caller input would violate the rule that caller
+//! inputs never establish trusted identity, decisions, grants, or ceilings.
+
+#[cfg(feature = "memory")]
+pub mod memory;
 
 use std::collections::BTreeSet;
 use std::fmt;

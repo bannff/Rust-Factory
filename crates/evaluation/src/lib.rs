@@ -4,6 +4,22 @@
 #![allow(clippy::needless_pass_by_value)]
 
 //! Transport-independent deterministic evaluation of terminal workflow evidence.
+//!
+//! The agent-facing MCP surface lives in [`mcp`] and a deterministic local
+//! store in [`memory`], each behind its own feature, so this crate's default
+//! build carries no transport or framework dependency.
+//!
+//! The `WorkflowStoreEvidenceReader` bridge that adapted `workflow::WorkflowStore`
+//! to [`WorkflowEvidenceReader`] deliberately does not live here: it would make
+//! this package depend on `workflow`, and Cargo prohibits package cycles
+//! regardless of features, permanently blocking `workflow` from ever consuming
+//! evaluation evidence. It belongs in the composition binary that needs it.
+//! Recover it from `crates/evaluation-memory/src/lib.rs` at commit 6f4d3e9.
+
+#[cfg(feature = "mcp")]
+pub mod mcp;
+#[cfg(feature = "memory")]
+pub mod memory;
 
 use sha2::{Digest, Sha256};
 use std::fmt;

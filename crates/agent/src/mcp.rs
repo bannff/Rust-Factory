@@ -1,11 +1,14 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
+//! Bounded MCP control-plane adapter for agent definitions and local invocation.
+//!
+//! Enabled by the `mcp` feature. This module owns transport DTOs, generated
+//! schemas, the policy gate, and safe response projection. It owns no process
+//! lifecycle: a composition binary under `projects/` binds the transport.
+
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::module_name_repetitions)]
 
-//! Bounded MCP control-plane adapter for agent definitions and local invocation.
-
-use agent::{
+use crate::{
     AgentDefinitionV1, AgentId, AgentRegistry, CommunicationPolicy, DefinitionError,
     DefinitionStore, DefinitionVersion, EffectiveCapabilityCeilingV1, ExecutionLimits,
     KnowledgePolicy, KnowledgeStore, LocalAgentRuntime, MAX_INPUT_BYTES, MemoryPolicy, MemoryStore,
@@ -13,13 +16,12 @@ use agent::{
     ToolRegistry, validate_definition,
 };
 use anyhow::{Context, Result};
-use mcp_transport::BoundedStdioTransport;
 use policy::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, GrantV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
 };
 use rmcp::{
-    ServerHandler, ServiceExt,
+    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     tool, tool_handler, tool_router,
 };
@@ -235,17 +237,6 @@ where
         })
     }
 
-    pub async fn serve_stdio(self) -> Result<()> {
-        self.serve(BoundedStdioTransport::new(
-            tokio::io::stdin(),
-            tokio::io::stdout(),
-        ))
-        .await?
-        .waiting()
-        .await?;
-        Ok(())
-    }
-
     fn validate_json(&self, input: AgentDefinitionInput) -> Result<String> {
         let result = (|| {
             let definition = input.into_core().map_err(domain_error)?;
@@ -412,15 +403,15 @@ fn definition_json(definition: &AgentDefinitionV1) -> Result<String> {
         json!({"version": definition.version.as_str(), "id": definition.id.as_str(), "name": definition.name, "description": definition.description, "model_reference": definition.model.reference, "instructions": definition.instructions, "skills": definition.skills, "steering": definition.steering, "allowed_tool_ids": definition.allowed_tool_ids, "memory": {"enabled": definition.memory.enabled, "max_items": definition.memory.max_items}, "knowledge": {"enabled": definition.knowledge.enabled, "max_results": definition.knowledge.max_results}, "sandbox": {"allow_execution": definition.sandbox.allow_execution}, "communication": {"allow_messages": definition.communication.allow_messages}, "limits": {"max_tool_calls": definition.limits.max_tool_calls, "max_output_bytes": definition.limits.max_output_bytes}}),
     )
 }
-fn invocation_json(result: agent::InvocationResult) -> Result<String> {
+fn invocation_json(result: crate::InvocationResult) -> Result<String> {
     serialize(
         json!({"capability_scope_digest": result.capability_scope_digest, "events": result.events.into_iter().map(|event| match event {
-        agent::InvocationEvent::ModelInvoked => json!({"type":"model_invoked"}),
-        agent::InvocationEvent::MemoryRecalled { values } => json!({"type":"memory_recalled", "values":values}),
-        agent::InvocationEvent::MemoryWritten => json!({"type":"memory_written"}),
-        agent::InvocationEvent::KnowledgeSearched { results } => json!({"type":"knowledge_searched", "results":results}),
-        agent::InvocationEvent::SandboxCompleted { output } => json!({"type":"sandbox_completed", "output":output}),
-        agent::InvocationEvent::ToolCompleted { tool_id, output } => json!({"type":"tool_completed", "tool_id":tool_id, "output":output}),
+        crate::InvocationEvent::ModelInvoked => json!({"type":"model_invoked"}),
+        crate::InvocationEvent::MemoryRecalled { values } => json!({"type":"memory_recalled", "values":values}),
+        crate::InvocationEvent::MemoryWritten => json!({"type":"memory_written"}),
+        crate::InvocationEvent::KnowledgeSearched { results } => json!({"type":"knowledge_searched", "results":results}),
+        crate::InvocationEvent::SandboxCompleted { output } => json!({"type":"sandbox_completed", "output":output}),
+        crate::InvocationEvent::ToolCompleted { tool_id, output } => json!({"type":"tool_completed", "tool_id":tool_id, "output":output}),
     }).collect::<Vec<_>>(), "output": result.output}),
     )
 }
@@ -480,7 +471,7 @@ pub const fn tool_names() -> [&'static str; 5] {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use agent::{
+    use crate::{
         DenySandbox, FixedToolRegistry, InMemoryDefinitionStore, InMemoryMemoryStore,
         ModelResponse, StaticKnowledgeStore, StaticModelProvider, StaticReferenceCatalog,
     };
@@ -842,7 +833,7 @@ mod tests {
     impl ModelProvider for RecordingModel {
         fn invoke(
             &self,
-            request: agent::ModelRequest,
+            request: crate::ModelRequest,
         ) -> std::result::Result<ModelResponse, DefinitionError> {
             self.calls.record("model.invoke");
             MODEL_SCOPES.with(|scopes| {
@@ -854,17 +845,17 @@ mod tests {
             Ok(self.responses.lock().expect("responses").remove(0))
         }
     }
-    thread_local! { static MODEL_SCOPES: Mutex<Vec<agent::ResolvedCapabilityScope>> = const { Mutex::new(Vec::new()) }; }
+    thread_local! { static MODEL_SCOPES: Mutex<Vec<crate::ResolvedCapabilityScope>> = const { Mutex::new(Vec::new()) }; }
     struct RecordingTools(PortCalls);
     impl ToolRegistry for RecordingTools {
-        fn resolve(&self, id: &str) -> std::result::Result<agent::ToolDescriptor, DefinitionError> {
+        fn resolve(&self, id: &str) -> std::result::Result<crate::ToolDescriptor, DefinitionError> {
             self.0.record("tools.resolve");
-            Ok(agent::ToolDescriptor { id: id.to_owned() })
+            Ok(crate::ToolDescriptor { id: id.to_owned() })
         }
         fn invoke(
             &self,
-            _: &agent::ToolDescriptor,
-            _: agent::ToolRequest,
+            _: &crate::ToolDescriptor,
+            _: crate::ToolRequest,
         ) -> std::result::Result<String, DefinitionError> {
             self.0.record("tools.invoke");
             Ok("tool output".to_owned())
@@ -874,14 +865,14 @@ mod tests {
     impl MemoryStore for RecordingMemory {
         fn recall(
             &self,
-            _: agent::MemoryRequest,
+            _: crate::MemoryRequest,
         ) -> std::result::Result<Vec<String>, DefinitionError> {
             self.0.record("memory.recall");
             Ok(vec![])
         }
         fn write(
             &self,
-            _: agent::MemoryRequest,
+            _: crate::MemoryRequest,
             _: String,
         ) -> std::result::Result<(), DefinitionError> {
             self.0.record("memory.write");
@@ -892,7 +883,7 @@ mod tests {
     impl KnowledgeStore for RecordingKnowledge {
         fn search(
             &self,
-            _: agent::KnowledgeRequest,
+            _: crate::KnowledgeRequest,
         ) -> std::result::Result<Vec<String>, DefinitionError> {
             self.0.record("knowledge.search");
             Ok(vec![])
@@ -902,7 +893,7 @@ mod tests {
     impl Sandbox for RecordingSandbox {
         fn execute(
             &self,
-            _: agent::SandboxRequest,
+            _: crate::SandboxRequest,
         ) -> std::result::Result<String, DefinitionError> {
             self.0.record("sandbox.execute");
             Ok("sandbox output".to_owned())
@@ -1042,7 +1033,7 @@ mod tests {
         let responses = vec![
             ModelResponse {
                 output: "ok".to_owned(),
-                tool_calls: vec![agent::ToolCall {
+                tool_calls: vec![crate::ToolCall {
                     tool_id: "allowed-tool".to_owned(),
                     input: String::new(),
                 }],
@@ -1050,7 +1041,7 @@ mod tests {
             },
             ModelResponse {
                 output: "ok".to_owned(),
-                tool_calls: vec![agent::ToolCall {
+                tool_calls: vec![crate::ToolCall {
                     tool_id: "denied-tool".to_owned(),
                     input: String::new(),
                 }],
@@ -1059,21 +1050,21 @@ mod tests {
             ModelResponse {
                 output: "ok".to_owned(),
                 tool_calls: vec![],
-                capability_requests: vec![agent::CapabilityRequest::MemoryRecall {
+                capability_requests: vec![crate::CapabilityRequest::MemoryRecall {
                     query: String::new(),
                 }],
             },
             ModelResponse {
                 output: "ok".to_owned(),
                 tool_calls: vec![],
-                capability_requests: vec![agent::CapabilityRequest::KnowledgeSearch {
+                capability_requests: vec![crate::CapabilityRequest::KnowledgeSearch {
                     query: String::new(),
                 }],
             },
             ModelResponse {
                 output: "ok".to_owned(),
                 tool_calls: vec![],
-                capability_requests: vec![agent::CapabilityRequest::SandboxExecute {
+                capability_requests: vec![crate::CapabilityRequest::SandboxExecute {
                     action: "action".to_owned(),
                     arguments: vec![],
                 }],

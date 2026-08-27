@@ -1,18 +1,19 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
-
 //! Bounded MCP control-plane adapter for Rust projects.
+//!
+//! Enabled by the `mcp` feature. Owns transport DTOs, generated schemas, and
+//! safe response projection — never process lifecycle.
+
+#![allow(clippy::module_name_repetitions)]
 
 use std::error::Error;
 
-use anyhow::{Context, Result};
-use mcp_transport::BoundedStdioTransport;
-use project::{
+use crate::{
     DefaultProjectAuthor, FindingSeverity, ProjectAuthor, ProjectBlueprint, ProjectKind,
     ProjectTarget, ProjectWriter, ValidationCode,
 };
+use anyhow::{Context, Result};
 use rmcp::{
-    ServerHandler, ServiceExt,
+    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     tool, tool_handler, tool_router,
 };
@@ -109,17 +110,6 @@ where
     /// # Errors
     ///
     /// Returns an error when the stdio transport cannot start or terminates unexpectedly.
-    pub async fn serve_stdio(self) -> Result<()> {
-        self.serve(BoundedStdioTransport::new(
-            tokio::io::stdin(),
-            tokio::io::stdout(),
-        ))
-        .await?
-        .waiting()
-        .await?;
-        Ok(())
-    }
-
     fn validate_json(&self, input: BlueprintInput) -> Result<String> {
         let report = self.author.validate(&input.into_core());
         let findings = report
@@ -251,16 +241,36 @@ pub const fn tool_names() -> [&'static str; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_fs::RootConfinedWriter;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::{GenerationPlan, MaterializedProject};
 
-    fn temporary_root() -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after Unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("rust-factory-mcp-{nanos}"))
+    /// A writer that records nothing and touches no filesystem.
+    ///
+    /// These tests exercise DTO conversion, validation projection, and generated
+    /// schemas, none of which materialize a plan. Using a stub rather than the
+    /// `fs` adapter keeps this module independent of the `fs` feature, so
+    /// `--features mcp` alone is a valid build.
+    #[derive(Clone, Copy, Debug, Default)]
+    struct StubWriter;
+
+    #[derive(Debug)]
+    struct StubError;
+    impl std::fmt::Display for StubError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("stub writer never writes")
+        }
+    }
+    impl Error for StubError {}
+
+    impl ProjectWriter for StubWriter {
+        type Error = StubError;
+
+        fn write(
+            &self,
+            _plan: &GenerationPlan,
+            _target: &ProjectTarget,
+        ) -> std::result::Result<MaterializedProject, Self::Error> {
+            Err(StubError)
+        }
     }
 
     fn input() -> BlueprintInput {
@@ -283,10 +293,7 @@ mod tests {
 
     #[test]
     fn validation_response_preserves_a_stable_error_code() {
-        let root = temporary_root();
-        let server = ProjectAuthoringMcp::new(
-            RootConfinedWriter::new(&root).expect("writer should initialize"),
-        );
+        let server = ProjectAuthoringMcp::new(StubWriter);
         let response = server
             .validate_json(BlueprintInput {
                 workspace_name: "bad name".to_owned(),
@@ -294,12 +301,11 @@ mod tests {
             })
             .expect("validation should return a response");
         assert!(response.contains("invalid_name"));
-        std::fs::remove_dir_all(root).expect("temporary root should be removed");
     }
 
     #[test]
     fn project_generate_schema_requires_a_target() {
-        let attributes = ProjectAuthoringMcp::<RootConfinedWriter>::project_generate_tool_attr();
+        let attributes = ProjectAuthoringMcp::<StubWriter>::project_generate_tool_attr();
         assert!(attributes.input_schema["properties"]["target"].is_object());
         assert!(
             attributes.input_schema["required"]

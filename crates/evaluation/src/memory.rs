@@ -1,86 +1,17 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
-#![allow(clippy::missing_errors_doc)]
-
 //! Deterministic in-memory evaluation adapters.
+//!
+//! Deterministic process-local adapters, enabled by the `memory` feature.
+//! No persistence, recovery, or cross-process durability guarantee.
+
+#![allow(clippy::missing_errors_doc)]
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use evaluation::{
-    CreateOrMatch, EvaluationError, EvaluationResultV1, EvaluationStore, EvidenceEventV1,
-    LogicalEvaluationKey, TerminalEvidenceSnapshotV1, TerminalReason, TerminalStatus,
-    WorkflowEvidenceReader, validate_result,
+use crate::{
+    CreateOrMatch, EvaluationError, EvaluationResultV1, EvaluationStore, LogicalEvaluationKey,
+    validate_result,
 };
-use workflow::{RunStatus, TerminalReason as WorkflowTerminalReason, WorkflowStore};
-
-#[derive(Clone)]
-pub struct WorkflowStoreEvidenceReader<S> {
-    store: S,
-}
-impl<S> WorkflowStoreEvidenceReader<S> {
-    #[must_use]
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
-}
-impl<S: WorkflowStore> WorkflowEvidenceReader for WorkflowStoreEvidenceReader<S> {
-    fn get_terminal(
-        &self,
-        tenant_id: &str,
-        run_id: &str,
-    ) -> Result<Option<TerminalEvidenceSnapshotV1>, EvaluationError> {
-        let tenant = workflow::LogicalId::new(tenant_id).map_err(|_| EvaluationError::NotFound)?;
-        let run = workflow::LogicalId::new(run_id).map_err(|_| EvaluationError::NotFound)?;
-        let Some(run) = self
-            .store
-            .get(&tenant, &run)
-            .map_err(|_| EvaluationError::AdapterFailure)?
-        else {
-            return Ok(None);
-        };
-        if !run.status.is_terminal() {
-            return Ok(None);
-        }
-        let Some(attempt) = run.attempt else {
-            return Ok(None);
-        };
-        let (status, reason) = match (run.status, run.terminal_reason) {
-            (RunStatus::Succeeded, Some(WorkflowTerminalReason::Completed)) => {
-                (TerminalStatus::Succeeded, TerminalReason::Completed)
-            }
-            (RunStatus::Failed, Some(WorkflowTerminalReason::InvocationFailed)) => {
-                (TerminalStatus::Failed, TerminalReason::InvocationFailed)
-            }
-            (RunStatus::Cancelled, Some(WorkflowTerminalReason::Cancelled)) => {
-                (TerminalStatus::Cancelled, TerminalReason::Cancelled)
-            }
-            _ => return Ok(None),
-        };
-        Ok(Some(TerminalEvidenceSnapshotV1 {
-            tenant_id: run.context.tenant_id.as_str().to_owned(),
-            run_id: run.id.as_str().to_owned(),
-            workflow_id: run.workflow_id.as_str().to_owned(),
-            workflow_version: run.workflow_version.as_str().to_owned(),
-            run_revision: run.revision,
-            terminal_status: status,
-            terminal_reason: reason,
-            attempt_id: attempt.id.as_str().to_owned(),
-            agent_id: attempt.agent_id.as_str().to_owned(),
-            capability_scope_digest: attempt.capability_scope_digest.unwrap_or_default(),
-            output: attempt.result.unwrap_or_default(),
-            events: run
-                .events
-                .into_iter()
-                .map(|event| EvidenceEventV1 {
-                    sequence: event.sequence,
-                    kind: event.kind,
-                    data: event.data,
-                })
-                .collect(),
-        }))
-    }
-}
 
 #[derive(Clone, Default)]
 pub struct InMemoryEvaluationStore {
@@ -153,11 +84,11 @@ mod tests {
         let mut result = EvaluationResultV1 {
             logical_key: key(tenant),
             evidence_digest: "b".repeat(64),
-            verdict: evaluation::Verdict::Pass,
+            verdict: crate::Verdict::Pass,
             findings: vec![],
             content_hash: String::new(),
         };
-        result.content_hash = evaluation::result_digest(&result).expect("digest");
+        result.content_hash = crate::result_digest(&result).expect("digest");
         result
     }
 
@@ -197,7 +128,7 @@ mod tests {
         ));
         let mut different = result("tenant");
         different.findings.push("different".to_owned());
-        different.content_hash = evaluation::result_digest(&different).expect("digest");
+        different.content_hash = crate::result_digest(&different).expect("digest");
         assert_eq!(
             store.create_or_match(different).expect("write"),
             CreateOrMatch::Conflict

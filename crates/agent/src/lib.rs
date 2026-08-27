@@ -3,6 +3,12 @@
 #![allow(clippy::missing_errors_doc)] // Trait methods share the typed DefinitionError contract.
 
 //! Transport-independent agent definitions and a bounded local runtime.
+//!
+//! The agent-facing MCP surface lives in [`mcp`], behind the `mcp` feature, so
+//! this crate's default build carries no transport or framework dependency.
+
+#[cfg(feature = "mcp")]
+pub mod mcp;
 
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

@@ -9,8 +9,13 @@ repository.workspace = true
 
 [package.metadata.rust-factory]
 family = "policy"
-role = "core"
+role = "brick"
 status = "implemented"
+
+# No feature is enabled by default. This brick has no `mcp` feature on purpose:
+# the authorization substrate is not agent-drivable.
+[features]
+memory = []
 
 [dependencies]
 sha2.workspace = true

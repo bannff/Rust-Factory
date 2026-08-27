@@ -1,19 +1,20 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
-#![allow(clippy::missing_errors_doc)]
-
 //! Deterministic in-memory workflow adapters for local use and tests.
+//!
+//! Deterministic process-local adapters, enabled by the `memory` feature.
+//! No persistence, recovery, lease, or cross-process cancellation guarantee.
+
+#![allow(clippy::missing_errors_doc)]
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use agent::AgentId;
-use workflow::{
+use crate::{
     AgentInvocationRequest, AgentInvocationResult, AgentInvoker, CreateRun, InvocationEvidence,
     InvocationEvidenceSink, LogicalId, StartIdentity, StartKey, Transition, TransitionResult,
     WorkflowDefinitionCatalog, WorkflowDefinitionV1, WorkflowError, WorkflowStore,
     transition_is_valid,
 };
+use agent::AgentId;
 
 #[derive(Clone, Default)]
 pub struct InMemoryWorkflowStore {
@@ -21,7 +22,7 @@ pub struct InMemoryWorkflowStore {
 }
 #[derive(Default)]
 struct State {
-    runs: BTreeMap<LogicalId, workflow::Run>,
+    runs: BTreeMap<LogicalId, crate::Run>,
     identities: BTreeMap<StartIdentity, LogicalId>,
     keys: BTreeMap<StartKey, StartIdentity>,
 }
@@ -29,7 +30,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
     fn create_or_return(
         &self,
         identity: StartIdentity,
-        run: workflow::Run,
+        run: crate::Run,
     ) -> Result<CreateRun, WorkflowError> {
         let mut state = self
             .state
@@ -51,13 +52,13 @@ impl WorkflowStore for InMemoryWorkflowStore {
             || run.workflow_version != identity.key.workflow_version
             || run.run_key != identity.key.run_key
             || run.input_digest != identity.input_digest
-            || run.status != workflow::RunStatus::Pending
+            || run.status != crate::RunStatus::Pending
             || run.revision != 0
             || run.terminal_reason.is_some()
             || run.attempt.is_some()
             || !run.events.is_empty()
             || run.max_evidence_bytes == 0
-            || run.max_evidence_bytes > workflow::MAX_EVIDENCE_BYTES
+            || run.max_evidence_bytes > crate::MAX_EVIDENCE_BYTES
         {
             return Err(WorkflowError::InvalidRequest);
         }
@@ -70,7 +71,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
         &self,
         tenant: &LogicalId,
         run: &LogicalId,
-    ) -> Result<Option<workflow::Run>, WorkflowError> {
+    ) -> Result<Option<crate::Run>, WorkflowError> {
         Ok(self
             .state
             .lock()
@@ -80,7 +81,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
             .filter(|value| &value.context.tenant_id == tenant)
             .cloned())
     }
-    fn list(&self, tenant: &LogicalId) -> Result<Vec<workflow::Run>, WorkflowError> {
+    fn list(&self, tenant: &LogicalId) -> Result<Vec<crate::Run>, WorkflowError> {
         Ok(self
             .state
             .lock()
@@ -96,7 +97,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
         tenant: &LogicalId,
         run_id: &LogicalId,
         revision: u64,
-        status: workflow::RunStatus,
+        status: crate::RunStatus,
         transition: Transition,
     ) -> Result<TransitionResult, WorkflowError> {
         let mut state = self
@@ -127,7 +128,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
 
 #[derive(Clone, Default)]
 pub struct StaticWorkflowCatalog {
-    definitions: BTreeMap<(LogicalId, workflow::WorkflowVersion), WorkflowDefinitionV1>,
+    definitions: BTreeMap<(LogicalId, crate::WorkflowVersion), WorkflowDefinitionV1>,
 }
 impl StaticWorkflowCatalog {
     #[must_use]
@@ -144,7 +145,7 @@ impl WorkflowDefinitionCatalog for StaticWorkflowCatalog {
     fn resolve(
         &self,
         id: &LogicalId,
-        version: workflow::WorkflowVersion,
+        version: crate::WorkflowVersion,
     ) -> Result<Option<WorkflowDefinitionV1>, WorkflowError> {
         Ok(self.definitions.get(&(id.clone(), version)).cloned())
     }
@@ -201,7 +202,7 @@ impl AgentInvoker for StaticAgentInvoker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use workflow::{
+    use crate::{
         AgentStep, Attempt, AttemptStatus, RequestContext, RunStatus, TerminalReason,
         WorkflowBudget, WorkflowEvent, WorkflowRunner, WorkflowVersion,
     };
@@ -301,14 +302,14 @@ mod tests {
             },
             input_digest: "digest".to_owned(),
         };
-        let run = |identity: &StartIdentity, name: &str| workflow::Run {
+        let run = |identity: &StartIdentity, name: &str| crate::Run {
             id: id(name),
             context: context("tenant"),
             workflow_id: id("workflow"),
             workflow_version: WorkflowVersion::V1,
             run_key: identity.key.run_key.clone(),
             input_digest: identity.input_digest.clone(),
-            max_evidence_bytes: workflow::MAX_EVIDENCE_BYTES,
+            max_evidence_bytes: crate::MAX_EVIDENCE_BYTES,
             status: RunStatus::Pending,
             revision: 0,
             terminal_reason: None,
@@ -405,7 +406,7 @@ mod tests {
         let store = InMemoryWorkflowStore::default();
         let mut evidence = vec![
             InvocationEvidence::new("agent_event", "x").expect("evidence");
-            workflow::MAX_EVENTS - 1
+            crate::MAX_EVENTS - 1
         ];
         evidence.push(InvocationEvidence::new("result", "x").expect("result"));
         let service = WorkflowRunner::new(
@@ -434,7 +435,7 @@ mod tests {
         assert_eq!(run.terminal_reason, Some(TerminalReason::InvocationFailed));
         assert_eq!(
             service.cancel(&id("tenant"), run.id.clone()),
-            Ok(workflow::RunSummary::from(&run))
+            Ok(crate::RunSummary::from(&run))
         );
     }
     #[test]
@@ -455,14 +456,14 @@ mod tests {
             result: None,
             error: None,
         };
-        let run = workflow::Run {
+        let run = crate::Run {
             id: id("run"),
             context: context("tenant"),
             workflow_id: id("workflow"),
             workflow_version: WorkflowVersion::V1,
             run_key: "key".to_owned(),
             input_digest: "digest".to_owned(),
-            max_evidence_bytes: workflow::MAX_EVIDENCE_BYTES,
+            max_evidence_bytes: crate::MAX_EVIDENCE_BYTES,
             status: RunStatus::Running,
             revision: 1,
             terminal_reason: None,
@@ -492,11 +493,11 @@ mod tests {
 #[cfg(test)]
 mod cancellation_tests {
     use super::*;
-    use std::sync::{Arc, Barrier};
-    use std::thread;
-    use workflow::{
+    use crate::{
         AgentStep, RequestContext, RunStatus, WorkflowBudget, WorkflowRunner, WorkflowVersion,
     };
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     #[derive(Clone)]
     struct BlockingInvoker {
@@ -582,12 +583,12 @@ mod cancellation_tests {
 #[cfg(test)]
 mod policy_attempt_tests {
     use super::*;
-    use agent::EffectiveCapabilityCeilingV1;
-    use workflow::{
+    use crate::{
         AgentStep, Attempt, AttemptStatus, InvocationPolicy, RequestContext, Run, RunStatus,
         TerminalReason, WorkflowBudget, WorkflowEvent, WorkflowRunner, WorkflowVersion,
         transition_is_valid,
     };
+    use agent::EffectiveCapabilityCeilingV1;
 
     fn id(value: &str) -> LogicalId {
         LogicalId::new(value).expect("logical id")
@@ -620,7 +621,7 @@ mod policy_attempt_tests {
             workflow_version: WorkflowVersion::V1,
             run_key: "key".to_owned(),
             input_digest: "digest".to_owned(),
-            max_evidence_bytes: workflow::MAX_EVIDENCE_BYTES,
+            max_evidence_bytes: crate::MAX_EVIDENCE_BYTES,
             status: RunStatus::Running,
             revision: 1,
             terminal_reason: None,

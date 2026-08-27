@@ -1,4 +1,11 @@
-.PHONY: fmt fmt-check lint test registry-check check
+.PHONY: fmt fmt-check lint lint-features test test-features isolation-check registry-check check
+
+# Every brick is one crate. Adapters are opt-in features and nothing is enabled
+# by default, so a workspace-wide command only exercises the framework-free
+# cores. The -features targets below are what cover the adapter code; without
+# them roughly half the workspace would go uncompiled, unlinted, and untested.
+
+BRICKS := agent evaluation policy project workflow
 
 fmt:
 	cargo fmt --all
@@ -9,11 +16,50 @@ fmt-check:
 lint:
 	cargo clippy --workspace --all-targets -- -D warnings
 
+# Each feature is linted alone. --all-features cannot replace these: it unifies
+# every feature, so it never proves that `project --features mcp` builds without
+# `fs`, which is exactly the combination a consumer is most likely to pick.
+lint-features:
+	cargo clippy -p agent --features mcp --all-targets -- -D warnings
+	cargo clippy -p evaluation --features mcp --all-targets -- -D warnings
+	cargo clippy -p evaluation --features memory --all-targets -- -D warnings
+	cargo clippy -p policy --features memory --all-targets -- -D warnings
+	cargo clippy -p project --features fs --all-targets -- -D warnings
+	cargo clippy -p project --features mcp --all-targets -- -D warnings
+	cargo clippy -p workflow --features mcp --all-targets -- -D warnings
+	cargo clippy -p workflow --features memory --all-targets -- -D warnings
+	cargo clippy --workspace --all-features --all-targets -- -D warnings
+
 test:
 	cargo test --workspace
+
+test-features:
+	cargo test -p agent --features mcp
+	cargo test -p evaluation --features mcp,memory
+	cargo test -p policy --features memory
+	cargo test -p project --features mcp,fs
+	cargo test -p project --features mcp
+	cargo test -p workflow --features mcp,memory
+	cargo test --workspace --all-features
+
+# Asserts that each brick's default build reaches no adapter dependency. This
+# proves framework-free *source*: `cargo tree -p <crate>` resolves that crate's
+# graph in isolation. It cannot prove framework-free *artifacts*, because Cargo
+# unifies features per build graph, so a binary composing several bricks with
+# `mcp` enabled links one framework-carrying build of each.
+isolation-check:
+	@for brick in $(BRICKS); do \
+		for dep in rmcp mcp-transport schemars anyhow cap-std tokio; do \
+			if cargo tree -q -p $$brick --invert $$dep >/dev/null 2>&1; then \
+				echo "isolation-check failed: default build of $$brick reaches $$dep" >&2; \
+				exit 1; \
+			fi; \
+		done; \
+		echo "isolation-check: $$brick default build is framework-free"; \
+	done
 
 registry-check:
 	python3 -m unittest scripts/test_validate_brick_registry.py
 	python3 scripts/validate_brick_registry.py
 
-check: registry-check fmt-check lint test
+check: registry-check isolation-check fmt-check lint lint-features test test-features

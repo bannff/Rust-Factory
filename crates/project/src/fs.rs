@@ -1,15 +1,14 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
-
 //! Capability-confined filesystem materialization for project plans.
+//!
+//! Root-confined filesystem materialization, enabled by the `fs` feature.
 
 use std::fmt;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use crate::{GenerationPlan, MaterializedProject, ProjectTarget, ProjectWriter};
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
-use project::{GenerationPlan, MaterializedProject, ProjectTarget, ProjectWriter};
 
 /// A writer confined to an opened output-directory capability.
 pub struct RootConfinedWriter {
@@ -145,7 +144,7 @@ impl std::error::Error for FsWriterError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project::{DefaultProjectAuthor, ProjectAuthor, ProjectBlueprint, ProjectKind};
+    use crate::{DefaultProjectAuthor, ProjectAuthor, ProjectBlueprint, ProjectKind};
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};

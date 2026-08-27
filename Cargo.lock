@@ -6,23 +6,14 @@ version = 4
 name = "agent"
 version = "0.1.0"
 dependencies = [
- "proptest",
- "sha2",
-]
-
-[[package]]
-name = "agent-mcp"
-version = "0.1.0"
-dependencies = [
- "agent",
  "anyhow",
- "mcp-transport",
  "policy",
+ "proptest",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
- "tokio",
+ "sha2",
 ]
 
 [[package]]
@@ -253,30 +244,13 @@ dependencies = [
 name = "evaluation"
 version = "0.1.0"
 dependencies = [
- "sha2",
-]
-
-[[package]]
-name = "evaluation-mcp"
-version = "0.1.0"
-dependencies = [
  "anyhow",
- "evaluation",
- "mcp-transport",
  "policy",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "evaluation-memory"
-version = "0.1.0"
-dependencies = [
- "evaluation",
- "workflow",
+ "sha2",
 ]
 
 [[package]]
@@ -616,13 +590,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "policy-memory"
-version = "0.1.0"
-dependencies = [
- "policy",
-]
-
-[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -643,28 +610,13 @@ dependencies = [
 [[package]]
 name = "project"
 version = "0.1.0"
-
-[[package]]
-name = "project-fs"
-version = "0.1.0"
-dependencies = [
- "cap-std",
- "project",
-]
-
-[[package]]
-name = "project-mcp"
-version = "0.1.0"
 dependencies = [
  "anyhow",
- "mcp-transport",
- "project",
- "project-fs",
+ "cap-std",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1416,34 +1368,14 @@ name = "workflow"
 version = "0.1.0"
 dependencies = [
  "agent",
- "proptest",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "workflow-mcp"
-version = "0.1.0"
-dependencies = [
- "agent",
  "anyhow",
- "mcp-transport",
  "policy",
+ "proptest",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
- "tokio",
- "workflow",
- "workflow-memory",
-]
-
-[[package]]
-name = "workflow-memory"
-version = "0.1.0"
-dependencies = [
- "agent",
- "workflow",
+ "sha2",
 ]
 
 [[package]]

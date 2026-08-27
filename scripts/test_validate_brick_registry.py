@@ -822,8 +822,8 @@ status = "implemented"
             package, Path(str(package["manifest_path"])), "server"
         )
 
-    def test_accepts_adapter_and_infrastructure_roles(self) -> None:
-        for role in ("adapter", "infrastructure", "memory", "mcp", "test-support"):
+    def test_accepts_library_roles(self) -> None:
+        for role in ("brick", "infrastructure", "test-support"):
             with self.subTest(role=role):
                 directory = self.root / f"crates/{IMPLEMENTED_FAMILY}-{role}"
                 package = self.package(
@@ -836,6 +836,126 @@ status = "implemented"
                 validator.validate_location_and_targets(
                     package, Path(str(package["manifest_path"])), role
                 )
+
+    def test_rejects_retired_per_adapter_roles(self) -> None:
+        """A brick is one crate, so an adapter is a module and not a package."""
+        for role in ("mcp", "memory", "adapter", "vendor", "core-adapter"):
+            with self.subTest(role=role):
+                directory = self.root / f"crates/{IMPLEMENTED_FAMILY}-{role}"
+                package = self.package(
+                    directory, IMPLEMENTED_FAMILY, role, "implemented"
+                )
+                self.assert_rejected(
+                    lambda: validator.factory_metadata(
+                        package, Path(str(package["manifest_path"]))
+                    )
+                )
+
+    # ---- adapter isolation ----------------------------------------------
+
+    def write_brick_source(self, relative_path: str, body: str) -> Path:
+        path = self.implemented_dir / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_accepts_adapter_dependency_inside_its_own_module(self) -> None:
+        for relative_path in ("src/mcp.rs", "src/mcp/service.rs"):
+            with self.subTest(relative_path=relative_path):
+                path = self.write_brick_source(
+                    relative_path, "use rmcp::ServerHandler;\n"
+                )
+                validator.validate_adapter_isolation(self.implemented_dir)
+                path.unlink()
+
+    def test_rejects_adapter_dependency_outside_its_module(self) -> None:
+        cases = (
+            ("src/lib.rs", "let _ = rmcp::ServerHandler;\n"),
+            ("src/model.rs", "use schemars::JsonSchema;\n"),
+            ("src/service.rs", "use anyhow::Result;\n"),
+            ("src/memory.rs", "use mcp_transport::BoundedStdioTransport;\n"),
+            ("src/mcp.rs", "use cap_std::fs::Dir;\n"),
+            ("src/lib.rs", "use cap_std::fs::Dir;\n"),
+        )
+        for relative_path, body in cases:
+            with self.subTest(relative_path=relative_path, body=body):
+                original = (self.implemented_dir / "src/lib.rs").read_text(
+                    encoding="utf-8"
+                )
+                self.write_brick_source(relative_path, body)
+                self.assert_rejected(
+                    lambda: validator.validate_adapter_isolation(self.implemented_dir)
+                )
+                if relative_path != "src/lib.rs":
+                    (self.implemented_dir / relative_path).unlink()
+                self.write_brick_source("src/lib.rs", original)
+
+    def test_module_of_maps_paths_to_top_level_modules(self) -> None:
+        cases = {
+            "src/lib.rs": "",
+            "src/model.rs": "model",
+            "src/mcp.rs": "mcp",
+            "src/mcp/dto.rs": "mcp",
+            "src/mcp/nested/deep.rs": "mcp",
+            "src/fs.rs": "fs",
+        }
+        for relative_path, expected in cases.items():
+            with self.subTest(relative_path=relative_path):
+                self.assertEqual(
+                    validator.module_of(
+                        self.implemented_dir / relative_path, self.implemented_dir
+                    ),
+                    expected,
+                )
+
+    # ---- feature table and conditional attributes -----------------------
+
+    def test_rejects_default_feature(self) -> None:
+        manifest = self.implemented_dir / "Cargo.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + '\n[features]\ndefault = ["mcp"]\nmcp = []\n',
+            encoding="utf-8",
+        )
+        self.assert_rejected(
+            lambda: validator.validate_feature_table(
+                manifest, validator.load_toml(manifest)
+            )
+        )
+
+    def test_accepts_feature_table_without_a_default(self) -> None:
+        manifest = self.implemented_dir / "Cargo.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + "\n[features]\nmcp = []\nmemory = []\n",
+            encoding="utf-8",
+        )
+        validator.validate_feature_table(manifest, validator.load_toml(manifest))
+
+    def test_rejects_conditional_attribute_on_a_domain_type(self) -> None:
+        for relative_path in ("src/lib.rs", "src/model.rs"):
+            with self.subTest(relative_path=relative_path):
+                original = (self.implemented_dir / "src/lib.rs").read_text(
+                    encoding="utf-8"
+                )
+                self.write_brick_source(
+                    relative_path,
+                    '#[cfg_attr(feature = "mcp", derive(Serialize))]\nstruct Leaky;\n',
+                )
+                self.assert_rejected(
+                    lambda: validator.validate_conditional_derives(self.implemented_dir)
+                )
+                if relative_path != "src/lib.rs":
+                    (self.implemented_dir / relative_path).unlink()
+                self.write_brick_source("src/lib.rs", original)
+
+    def test_accepts_conditional_attribute_inside_an_adapter_module(self) -> None:
+        path = self.write_brick_source(
+            "src/mcp.rs",
+            '#[cfg_attr(feature = "extra", derive(Debug))]\nstruct Dto;\n',
+        )
+        validator.validate_conditional_derives(self.implemented_dir)
+        path.unlink()
 
     # ---- end-to-end main() ----------------------------------------------
 

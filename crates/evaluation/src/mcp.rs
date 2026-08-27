@@ -1,24 +1,25 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
+//! Bounded MCP control-plane adapter for evaluation operations.
+//!
+//! Enabled by the `mcp` feature. Owns transport DTOs, generated schemas, the
+//! policy gate, and safe response projection — never process lifecycle.
+
 #![allow(clippy::missing_errors_doc)]
+#![allow(clippy::module_name_repetitions)]
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::unused_self)]
 
-//! Bounded MCP control-plane adapter for evaluation operations.
-
-use anyhow::{Context, Result};
-use evaluation::{
+use crate::{
     CriterionV1, EvaluationDefinitionV1, EvaluationError, EvaluationStore, LogicalEvaluationKey,
     WorkflowEvidenceReader, definition_digest, evaluate_and_store, validate_definition,
     validate_logical_key,
 };
-use mcp_transport::BoundedStdioTransport;
+use anyhow::{Context, Result};
 use policy::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
 };
 use rmcp::{
-    ServerHandler, ServiceExt,
+    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     tool, tool_handler, tool_router,
 };
@@ -170,17 +171,6 @@ where
         }
     }
 
-    pub async fn serve_stdio(self) -> Result<()> {
-        self.serve(BoundedStdioTransport::new(
-            tokio::io::stdin(),
-            tokio::io::stdout(),
-        ))
-        .await?
-        .waiting()
-        .await?;
-        Ok(())
-    }
-
     fn validate_json(&self, input: DefinitionInput) -> Result<String> {
         let result = (|| {
             validate_mcp_request(&input)?;
@@ -214,9 +204,10 @@ where
         )
         .map_err(public_error)?;
         let result = match result {
-            evaluation::CreateOrMatch::Created(result)
-            | evaluation::CreateOrMatch::Existing(result) => result,
-            evaluation::CreateOrMatch::Conflict => return Err(anyhow::anyhow!("conflict")),
+            crate::CreateOrMatch::Created(result) | crate::CreateOrMatch::Existing(result) => {
+                result
+            }
+            crate::CreateOrMatch::Conflict => return Err(anyhow::anyhow!("conflict")),
         };
         result_json(&result)
     }
@@ -312,7 +303,7 @@ fn validate_get_input(input: &GetResultInput) -> Result<(), EvaluationError> {
         workflow_revision: input.workflow_revision,
     })
 }
-fn result_json(result: &evaluation::EvaluationResultV1) -> Result<String> {
+fn result_json(result: &crate::EvaluationResultV1) -> Result<String> {
     serialize(
         json!({"evaluator_id":result.logical_key.evaluator_id,"evaluator_version":result.logical_key.evaluator_version,"criterion_digest":result.logical_key.criterion_digest,"run_id":result.logical_key.workflow_run_id,"workflow_revision":result.logical_key.workflow_revision,"evidence_digest":result.evidence_digest,"verdict":verdict_name(result.verdict),"findings":result.findings,"content_hash":result.content_hash}),
     )
@@ -334,19 +325,19 @@ fn public_error(error: EvaluationError) -> anyhow::Error {
 }
 fn public_code(error: EvaluationError) -> &'static str {
     match error.public_code() {
-        evaluation::PublicErrorCode::InvalidRequest => "invalid_request",
-        evaluation::PublicErrorCode::InvalidDefinition => "invalid_definition",
-        evaluation::PublicErrorCode::NotFound => "not_found",
-        evaluation::PublicErrorCode::Conflict => "conflict",
-        evaluation::PublicErrorCode::LimitExceeded => "limit_exceeded",
-        evaluation::PublicErrorCode::OperationFailed => "operation_failed",
+        crate::PublicErrorCode::InvalidRequest => "invalid_request",
+        crate::PublicErrorCode::InvalidDefinition => "invalid_definition",
+        crate::PublicErrorCode::NotFound => "not_found",
+        crate::PublicErrorCode::Conflict => "conflict",
+        crate::PublicErrorCode::LimitExceeded => "limit_exceeded",
+        crate::PublicErrorCode::OperationFailed => "operation_failed",
     }
 }
-fn verdict_name(verdict: evaluation::Verdict) -> &'static str {
+fn verdict_name(verdict: crate::Verdict) -> &'static str {
     match verdict {
-        evaluation::Verdict::Pass => "pass",
-        evaluation::Verdict::Fail => "fail",
-        evaluation::Verdict::Error => "error",
+        crate::Verdict::Pass => "pass",
+        crate::Verdict::Fail => "fail",
+        crate::Verdict::Error => "error",
     }
 }
 fn tool_response(response: Result<String>) -> String {
@@ -432,7 +423,7 @@ mod tests {
             &self,
             _: &str,
             _: &str,
-        ) -> Result<Option<evaluation::TerminalEvidenceSnapshotV1>, EvaluationError> {
+        ) -> Result<Option<crate::TerminalEvidenceSnapshotV1>, EvaluationError> {
             self.calls.push("reader");
             Ok(None)
         }
@@ -440,8 +431,8 @@ mod tests {
     impl EvaluationStore for Domain {
         fn create_or_match(
             &self,
-            _: evaluation::EvaluationResultV1,
-        ) -> Result<evaluation::CreateOrMatch, EvaluationError> {
+            _: crate::EvaluationResultV1,
+        ) -> Result<crate::CreateOrMatch, EvaluationError> {
             self.calls.push("store.create");
             Err(EvaluationError::AdapterFailure)
         }
@@ -449,11 +440,11 @@ mod tests {
             &self,
             _: &str,
             _: &LogicalEvaluationKey,
-        ) -> Result<Option<evaluation::EvaluationResultV1>, EvaluationError> {
+        ) -> Result<Option<crate::EvaluationResultV1>, EvaluationError> {
             self.calls.push("store.get");
             Ok(None)
         }
-        fn list(&self, _: &str) -> Result<Vec<evaluation::EvaluationResultV1>, EvaluationError> {
+        fn list(&self, _: &str) -> Result<Vec<crate::EvaluationResultV1>, EvaluationError> {
             Ok(vec![])
         }
     }
@@ -632,7 +623,7 @@ mod tests {
     }
     #[test]
     fn result_projection_omits_trusted_context_and_decision() {
-        let result = evaluation::EvaluationResultV1 {
+        let result = crate::EvaluationResultV1 {
             logical_key: LogicalEvaluationKey {
                 tenant_id: "secret-tenant".to_owned(),
                 evaluator_id: "evaluator".to_owned(),
@@ -642,7 +633,7 @@ mod tests {
                 workflow_revision: 1,
             },
             evidence_digest: "b".repeat(64),
-            verdict: evaluation::Verdict::Pass,
+            verdict: crate::Verdict::Pass,
             findings: vec![],
             content_hash: "c".repeat(64),
         };

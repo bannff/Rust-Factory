@@ -17,6 +17,7 @@ Runs without third-party dependencies or network access and enforces that:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -91,15 +92,30 @@ STATE_DEFERRED = "Deferred"
 MAX_READ_BYTES = 1 << 20
 
 VALID_ROLES = {
+    # One crate per brick: a capability plus its opt-in, feature-gated adapters.
+    "brick",
+    # A status-only family that has no behavior yet.
     "core",
-    "memory",
-    "adapter",
-    "vendor",
-    "mcp",
+    # Shared cross-family infrastructure that owns no capability.
+    "infrastructure",
+    # Roles reserved for packages a brick cannot contain: a deployable binary, a
+    # peer-coordination adapter, and shared test fixtures.
     "server",
     "mesh",
-    "infrastructure",
     "test-support",
+}
+
+# An adapter dependency may only be named under its own feature-gated module.
+# Consolidating each brick into one crate removed the crate boundary that used
+# to make "the core never touches rmcp" mechanically true, so this path rule
+# replaces it. serde and serde_json are absent deliberately: workflow uses
+# serde_json in its core for canonical JSON.
+ADAPTER_MODULES = {
+    "rmcp": "mcp",
+    "mcp_transport": "mcp",
+    "schemars": "mcp",
+    "anyhow": "mcp",
+    "cap_std": "fs",
 }
 VALID_STATUSES = {
     "scaffolded",
@@ -313,6 +329,74 @@ def validate_package_name(
             f"{relative(manifest_path)}: package name {name!r} must be {family!r} or "
             f"start with {family + '-'!r} to match its declared family"
         )
+
+
+def source_files(package_dir: Path) -> list[Path]:
+    return sorted(path for path in package_dir.rglob("*.rs") if path.is_file())
+
+
+def module_of(source: Path, package_dir: Path) -> str:
+    """Returns the top-level module a source file belongs to.
+
+    ``src/mcp.rs`` and ``src/mcp/service.rs`` both yield ``mcp``; ``src/lib.rs``
+    yields the empty string.
+    """
+    relative = source.relative_to(package_dir)
+    parts = relative.parts
+    if len(parts) < 2 or parts[0] != "src":
+        return ""
+    if len(parts) == 2:
+        return "" if parts[1] == "lib.rs" else parts[1].removesuffix(".rs")
+    return parts[1]
+
+
+def validate_adapter_isolation(package_dir: Path) -> None:
+    """Keeps adapter dependencies inside their own feature-gated module."""
+    for source in source_files(package_dir):
+        module = module_of(source, package_dir)
+        text = read_bounded(source)
+        for crate, required_module in ADAPTER_MODULES.items():
+            if not re.search(rf"\b{re.escape(crate)}::", text):
+                continue
+            if module != required_module:
+                location = relative(source)
+                raise ValueError(
+                    f"{location}: names the adapter dependency {crate!r}, which may "
+                    f"appear only under the {required_module!r} module. Adapter code "
+                    "belongs behind its own feature gate so the default build stays "
+                    "framework-free"
+                )
+
+
+def validate_feature_table(manifest_path: Path, manifest: dict[str, Any]) -> None:
+    """No feature may be on by default, or the opt-in guarantee is not real."""
+    features = manifest.get("features")
+    if features is None:
+        return
+    if not isinstance(features, dict):
+        raise ValueError(f"{relative(manifest_path)}: invalid [features] table")
+    if "default" in features:
+        raise ValueError(
+            f"{relative(manifest_path)}: declares a `default` feature. Adapters are "
+            "opt-in; a default feature puts framework dependencies back into every "
+            "build"
+        )
+
+
+def validate_conditional_derives(package_dir: Path) -> None:
+    """A cfg_attr feature gate outside an adapter module would give the crate two
+    different public APIs depending on who else is in the build graph."""
+    for source in source_files(package_dir):
+        module = module_of(source, package_dir)
+        if module in set(ADAPTER_MODULES.values()):
+            continue
+        text = read_bounded(source)
+        if re.search(r"#\s*\[\s*cfg_attr\s*\(\s*feature\s*=", text):
+            raise ValueError(
+                f"{relative(source)}: uses a feature-conditional attribute outside an "
+                "adapter module. Boundary types belong in the adapter module rather "
+                "than deriving onto a domain type under cfg_attr"
+            )
 
 
 def validate_status_only_placement(manifest_path: Path, family: str, role: str) -> None:
@@ -746,10 +830,14 @@ def main() -> int:
             validate_package_name(package, manifest_path, family, role)
             owned_names.setdefault(family, set()).add(str(package["name"]))
             validate_location_and_targets(package, manifest_path, role)
+            package_dir = package_directory(manifest_path)
+            validate_feature_table(manifest_path, load_toml(manifest_path))
+            if role == "brick":
+                validate_adapter_isolation(package_dir)
+                validate_conditional_derives(package_dir)
             if status != "scaffolded":
                 continue
             validate_status_only_placement(manifest_path, family, role)
-            package_dir = package_directory(manifest_path)
             validate_package_tree(package_dir)
             validate_manifest_configuration(manifest_path, load_toml(manifest_path))
             validate_source_content(package_dir)

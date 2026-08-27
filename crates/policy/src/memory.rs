@@ -1,13 +1,14 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
-#![allow(clippy::missing_errors_doc)]
-
 //! Deterministic process-local policy grant resolution.
+//!
+//! Deterministic process-local grant resolution, enabled by the `memory`
+//! feature. Process-local only: no persistence, no cross-process guarantee.
+
+#![allow(clippy::missing_errors_doc)]
 
 use std::collections::BTreeMap;
 use std::fmt;
 
-use policy::{
+use crate::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, GrantV1, PolicyError,
     PolicyResolver, PrincipalId, TenantId, allow_decision, canonical_grant, deny_decision,
 };
@@ -93,7 +94,7 @@ impl PolicyResolver for StaticPolicyResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use policy::{CorrelationId, RequestId, SafeDenyReasonV1, TrustedContextV1};
+    use crate::{CorrelationId, RequestId, SafeDenyReasonV1, TrustedContextV1};
 
     fn tenant(value: &str) -> TenantId {
         TenantId::new(value).expect("tenant")

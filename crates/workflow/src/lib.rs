@@ -6,6 +6,15 @@
 #![allow(clippy::too_many_lines)]
 
 //! Transport-independent lifecycle contracts for one bounded local agent invocation.
+//!
+//! The agent-facing MCP surface lives in [`mcp`] and deterministic local
+//! adapters in [`memory`], each behind its own feature, so this crate's
+//! default build carries no transport or framework dependency.
+
+#[cfg(feature = "mcp")]
+pub mod mcp;
+#[cfg(feature = "memory")]
+pub mod memory;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

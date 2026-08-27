@@ -1,31 +1,32 @@
-#![forbid(unsafe_code)]
-#![deny(rust_2018_idioms)]
+//! Bounded MCP control-plane adapter for workflow operations.
+//!
+//! Enabled by the `mcp` feature. Owns transport DTOs, generated schemas, the
+//! policy gate, and safe response projection — never process lifecycle.
+
 #![allow(clippy::missing_errors_doc)]
+#![allow(clippy::module_name_repetitions)]
 #![allow(clippy::needless_pass_by_value)]
 
-//! Bounded MCP control-plane adapter for workflow operations.
-
+use crate::{
+    AgentInvoker, AgentStep, InvocationPolicy, LogicalId, MAX_JSON_INPUT_BYTES, MAX_RUN_KEY_BYTES,
+    PublicErrorCode, RequestContext, RunSummary, TerminalReason, WorkflowBudget,
+    WorkflowDefinitionCatalog, WorkflowDefinitionV1, WorkflowError, WorkflowRunner, WorkflowStore,
+    WorkflowVersion, canonical_json, validate_definition,
+};
 use agent::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
 use anyhow::{Context, Result};
-use mcp_transport::BoundedStdioTransport;
 use policy::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
 };
 use rmcp::{
-    ServerHandler, ServiceExt,
+    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     tool, tool_handler, tool_router,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use workflow::{
-    AgentInvoker, AgentStep, InvocationPolicy, LogicalId, MAX_JSON_INPUT_BYTES, MAX_RUN_KEY_BYTES,
-    PublicErrorCode, RequestContext, RunSummary, TerminalReason, WorkflowBudget,
-    WorkflowDefinitionCatalog, WorkflowDefinitionV1, WorkflowError, WorkflowRunner, WorkflowStore,
-    WorkflowVersion, canonical_json, validate_definition,
-};
 
 pub const WORKFLOW_TOOLS: [&str; 5] = [
     "workflow_validate",
@@ -161,7 +162,7 @@ pub struct CeilingAgentInvocation {
     pub agent_id: AgentId,
     pub input: String,
     pub effective_capability_ceiling: EffectiveCapabilityCeilingV1,
-    pub cancellation: workflow::CancellationSignal,
+    pub cancellation: crate::CancellationSignal,
     pub deadline: std::time::Instant,
     pub downstream_idempotency_key: String,
 }
@@ -192,9 +193,9 @@ impl<R: CeilingAgentRuntime> AgentInvoker for PolicyAwareAgentInvoker<R> {
 
     fn invoke(
         &self,
-        request: workflow::AgentInvocationRequest,
-        evidence: &mut dyn workflow::InvocationEvidenceSink,
-    ) -> Result<workflow::AgentInvocationResult, WorkflowError> {
+        request: crate::AgentInvocationRequest,
+        evidence: &mut dyn crate::InvocationEvidenceSink,
+    ) -> Result<crate::AgentInvocationResult, WorkflowError> {
         if request.policy_decision_digest.len() != 64
             || !request
                 .policy_decision_digest
@@ -212,8 +213,8 @@ impl<R: CeilingAgentRuntime> AgentInvoker for PolicyAwareAgentInvoker<R> {
             deadline: request.deadline,
             downstream_idempotency_key: request.downstream_idempotency_key,
         })?;
-        evidence.emit(workflow::InvocationEvidence::new("result", result.output)?)?;
-        Ok(workflow::AgentInvocationResult {
+        evidence.emit(crate::InvocationEvidence::new("result", result.output)?)?;
+        Ok(crate::AgentInvocationResult {
             capability_scope_digest: result.capability_scope_digest,
         })
     }
@@ -251,16 +252,6 @@ where
             resolver,
             tool_router: Self::tool_router(),
         }
-    }
-    pub async fn serve_stdio(self) -> Result<()> {
-        self.serve(BoundedStdioTransport::new(
-            tokio::io::stdin(),
-            tokio::io::stdout(),
-        ))
-        .await?
-        .waiting()
-        .await?;
-        Ok(())
     }
     fn validate_json(&self, input: WorkflowDefinitionInput) -> Result<String> {
         let result = (|| {
@@ -405,13 +396,13 @@ fn summary_value(summary: &RunSummary) -> serde_json::Value {
 fn summary_json(summary: &RunSummary) -> Result<String> {
     serialize(summary_value(summary))
 }
-fn status_name(status: workflow::RunStatus) -> &'static str {
+fn status_name(status: crate::RunStatus) -> &'static str {
     match status {
-        workflow::RunStatus::Pending => "pending",
-        workflow::RunStatus::Running => "running",
-        workflow::RunStatus::Succeeded => "succeeded",
-        workflow::RunStatus::Failed => "failed",
-        workflow::RunStatus::Cancelled => "cancelled",
+        crate::RunStatus::Pending => "pending",
+        crate::RunStatus::Running => "running",
+        crate::RunStatus::Succeeded => "succeeded",
+        crate::RunStatus::Failed => "failed",
+        crate::RunStatus::Cancelled => "cancelled",
     }
 }
 fn reason_name(reason: TerminalReason) -> &'static str {
@@ -511,12 +502,12 @@ mod compatibility_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    use policy::{
-        CorrelationId, GrantV1, PrincipalId, RequestId, TenantId, allow_decision, deny_decision,
-    };
-    use workflow::{
+    use crate::{
         AgentInvocationRequest, CancellationSignal, InvocationEvidence, InvocationEvidenceSink,
         Transition, TransitionResult,
+    };
+    use policy::{
+        CorrelationId, GrantV1, PrincipalId, RequestId, TenantId, allow_decision, deny_decision,
     };
 
     #[derive(Clone, Default)]
@@ -532,9 +523,9 @@ mod compatibility_tests {
     impl WorkflowStore for RecordingDomain {
         fn create_or_return(
             &self,
-            _: workflow::StartIdentity,
-            _: workflow::Run,
-        ) -> std::result::Result<workflow::CreateRun, WorkflowError> {
+            _: crate::StartIdentity,
+            _: crate::Run,
+        ) -> std::result::Result<crate::CreateRun, WorkflowError> {
             self.record("store.create");
             Err(WorkflowError::AdapterFailure)
         }
@@ -542,11 +533,11 @@ mod compatibility_tests {
             &self,
             _: &LogicalId,
             _: &LogicalId,
-        ) -> std::result::Result<Option<workflow::Run>, WorkflowError> {
+        ) -> std::result::Result<Option<crate::Run>, WorkflowError> {
             self.record("store.get");
             Err(WorkflowError::AdapterFailure)
         }
-        fn list(&self, _: &LogicalId) -> std::result::Result<Vec<workflow::Run>, WorkflowError> {
+        fn list(&self, _: &LogicalId) -> std::result::Result<Vec<crate::Run>, WorkflowError> {
             self.record("store.list");
             Err(WorkflowError::AdapterFailure)
         }
@@ -555,7 +546,7 @@ mod compatibility_tests {
             _: &LogicalId,
             _: &LogicalId,
             _: u64,
-            _: workflow::RunStatus,
+            _: crate::RunStatus,
             _: Transition,
         ) -> std::result::Result<TransitionResult, WorkflowError> {
             self.record("store.transition");
@@ -984,12 +975,13 @@ mod compatibility_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "memory"))]
 mod composition_tests {
     use super::*;
     use std::sync::{Arc, Barrier, Mutex};
     use std::thread;
 
+    use crate::memory::{InMemoryWorkflowStore, StaticWorkflowCatalog};
     use agent::{
         AgentDefinitionV1, AgentRegistry, CommunicationPolicy, DefinitionError, DefinitionVersion,
         DenySandbox, ExecutionLimits, InMemoryDefinitionStore, InMemoryMemoryStore,
@@ -998,7 +990,6 @@ mod composition_tests {
         ToolDescriptor, ToolRegistry, ToolRequest,
     };
     use policy::{CorrelationId, GrantV1, PrincipalId, RequestId, TenantId, allow_decision};
-    use workflow_memory::{InMemoryWorkflowStore, StaticWorkflowCatalog};
 
     const AGENT_DEFINITION_TOOLS: [&str; 2] = ["read", "write"];
     const ALLOWED_TOOL: &str = AGENT_DEFINITION_TOOLS[0];

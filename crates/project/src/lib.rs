@@ -2,6 +2,15 @@
 #![deny(rust_2018_idioms)]
 
 //! Transport-independent contracts for the Rust Factory project brick.
+//!
+//! The agent-facing MCP surface lives in [`mcp`] and root-confined filesystem
+//! materialization in [`fs`], each behind its own feature, so this crate's
+//! default build carries no transport, framework, or filesystem dependency.
+
+#[cfg(feature = "fs")]
+pub mod fs;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
