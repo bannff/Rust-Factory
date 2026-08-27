@@ -1,5 +1,5 @@
 [package]
-name = "workflow-core"
+name = "workflow"
 description = "Transport-independent durable lifecycle contracts for one bounded agent invocation."
 version.workspace = true
 edition.workspace = true
@@ -13,7 +13,7 @@ role = "core"
 status = "implemented"
 
 [dependencies]
-agent-core = { path = "../agent-core", version = "=0.1.0" }
+agent = { path = "../agent", version = "=0.1.0" }
 serde_json.workspace = true
 sha2 = "=0.10.9"
 

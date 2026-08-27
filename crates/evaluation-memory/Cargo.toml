@@ -13,8 +13,8 @@ role = "memory"
 status = "implemented"
 
 [dependencies]
-evaluation-core = { path = "../evaluation-core", version = "=0.1.0" }
-workflow-core = { path = "../workflow-core", version = "=0.1.0" }
+evaluation = { path = "../evaluation", version = "=0.1.0" }
+workflow = { path = "../workflow", version = "=0.1.0" }
 
 [lints]
 workspace = true

@@ -1,6 +1,5 @@
 [package]
-name = "evaluation-core"
-description = "Deterministic, immutable evaluation contracts for terminal workflow evidence."
+name = "sandbox"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,12 +7,9 @@ rust-version.workspace = true
 repository.workspace = true
 
 [package.metadata.rust-factory]
-family = "evaluation"
+family = "sandbox"
 role = "core"
-status = "implemented"
-
-[dependencies]
-sha2.workspace = true
+status = "scaffolded"
 
 [lints]
 workspace = true

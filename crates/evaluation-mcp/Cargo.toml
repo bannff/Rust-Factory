@@ -14,9 +14,9 @@ status = "migration-pending"
 
 [dependencies]
 anyhow.workspace = true
-evaluation-core = { path = "../evaluation-core", version = "=0.1.0" }
+evaluation = { path = "../evaluation", version = "=0.1.0" }
 mcp-transport = { path = "../mcp-transport", version = "=0.1.0" }
-policy-core = { path = "../policy-core", version = "=0.1.0" }
+policy = { path = "../policy", version = "=0.1.0" }
 rmcp.workspace = true
 schemars.workspace = true
 serde.workspace = true

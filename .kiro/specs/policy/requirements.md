@@ -6,7 +6,7 @@ Policy is the canonical trusted-context and capability-grant decision layer. It 
 
 ## V1 requirements
 
-1. `policy-core` owns validated `TenantId`, `PrincipalId`, `RequestId`, `CorrelationId`, `TrustedContextV1`, closed `CapabilityV1`, `GrantV1`, `AuthorizationRequestV1`, `AuthorizationDecisionV1`, errors, and core traits.
+1. `policy` owns validated `TenantId`, `PrincipalId`, `RequestId`, `CorrelationId`, `TrustedContextV1`, closed `CapabilityV1`, `GrantV1`, `AuthorizationRequestV1`, `AuthorizationDecisionV1`, errors, and core traits.
 2. A trusted embedding/session adapter alone resolves `TrustedContextV1`; MCP input, workflow input, model output, stored data, and agent definitions never establish identity.
 3. Closed capabilities cover existing controls: Agent definition validate/get/list/register, Agent invoke, Workflow validate/start/get/list/cancel, Evaluation validate/evaluate/get.
 4. `PolicyResolver` returns allow or deny plus a canonical effective grant. Unknown principal, tenant, capability, malformed context, or resolver failure deny by default.
@@ -24,4 +24,4 @@ Policy V1 authorizes Agent, Workflow, and Evaluation MCP operations. Project MCP
 
 Agent definitions are globally shared Factory definitions in V1. Policy gates operation access but does not claim tenant-private definition visibility; tenant-scoped DefinitionStore is a later breaking migration.
 
-Before Agent MCP migration, `agent-core` SHALL introduce a policy-neutral `EffectiveCapabilityCeilingV1` invocation input. It is the intersection of definition scope and grant: ordered allowed tools plus memory/knowledge/sandbox/communication booleans. The runtime constructs its advertised/effective scope from that ceiling and must deny any definition-allowed but ceiling-disallowed capability before model advertisement or adapter invocation.
+Before Agent MCP migration, `agent` SHALL introduce a policy-neutral `EffectiveCapabilityCeilingV1` invocation input. It is the intersection of definition scope and grant: ordered allowed tools plus memory/knowledge/sandbox/communication booleans. The runtime constructs its advertised/effective scope from that ceiling and must deny any definition-allowed but ceiling-disallowed capability before model advertisement or adapter invocation.

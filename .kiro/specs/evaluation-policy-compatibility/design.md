@@ -5,7 +5,7 @@ host session adapter → TrustedContextV1
                          ↓
               PolicyResolver::authorize(capability)
                          ↓ verified Allow
- evaluation-mcp compatibility adapter → tenant ID → evaluation-core ports
+ evaluation-mcp compatibility adapter → tenant ID → evaluation ports
                                                 ├─ WorkflowEvidenceReader (read-only)
                                                 └─ EvaluationStore (immutable create-or-match)
 ```

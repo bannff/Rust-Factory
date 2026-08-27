@@ -1,23 +1,23 @@
 [workspace]
 members = [
-    "crates/policy-core",
+    "crates/policy",
     "crates/policy-memory",
     "crates/mcp-transport",
-    "crates/agent-core",
+    "crates/agent",
     "crates/agent-mcp",
-    "crates/project-core",
+    "crates/project",
     "crates/project-fs",
     "crates/project-mcp",
-    "crates/workflow-core",
+    "crates/workflow",
     "crates/workflow-memory",
     "crates/workflow-mcp",
-    "crates/evaluation-core",
+    "crates/evaluation",
     "crates/evaluation-memory",
     "crates/evaluation-mcp",
-    "crates/model-gateway-core",
-    "crates/memory-core",
-    "crates/sandbox-core",
-    "crates/observability-core",
+    "crates/model-gateway",
+    "crates/memory",
+    "crates/sandbox",
+    "crates/observability",
 ]
 resolver = "3"
 

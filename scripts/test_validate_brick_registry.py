@@ -70,8 +70,8 @@ class BrickRegistryValidatorTests(unittest.TestCase):
         self.addCleanup(self.restore_globals)
         self.addCleanup(self.temporary_directory.cleanup)
 
-        self.scaffold_dir = self.root / f"crates/{STATUS_ONLY_FAMILY}-core"
-        self.implemented_dir = self.root / f"crates/{IMPLEMENTED_FAMILY}-core"
+        self.scaffold_dir = self.root / f"crates/{STATUS_ONLY_FAMILY}"
+        self.implemented_dir = self.root / f"crates/{IMPLEMENTED_FAMILY}"
         self.write_valid_workspace()
         self.write_valid_registry()
         self.write_valid_scaffold()
@@ -86,8 +86,8 @@ class BrickRegistryValidatorTests(unittest.TestCase):
     def write_valid_workspace(self, members: list[str] | None = None) -> None:
         if members is None:
             members = [
-                f"crates/{STATUS_ONLY_FAMILY}-core",
-                f"crates/{IMPLEMENTED_FAMILY}-core",
+                f"crates/{STATUS_ONLY_FAMILY}",
+                f"crates/{IMPLEMENTED_FAMILY}",
             ]
         rendered = "\n".join(f'    "{member}",' for member in members)
         validator.ROOT_MANIFEST.write_text(
@@ -100,9 +100,9 @@ class BrickRegistryValidatorTests(unittest.TestCase):
             "",
             "| Family | Taxonomy | Owning crate | Mature shape | Current state |",
             "|---|---|---|---|---|",
-            f"| Widget | Capability | `{STATUS_ONLY_FAMILY}-core` | core | Scaffolded |",
-            f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}-core` | core | Implemented |",
-            f"| Sprocket | Capability | `{DEFERRED_FAMILY}-core` | core | Deferred |",
+            f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |",
+            f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}` | core | Implemented |",
+            f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
         ]
         document = "\n".join(rows) + "\n"
         if extra:
@@ -113,7 +113,7 @@ class BrickRegistryValidatorTests(unittest.TestCase):
         self.scaffold_dir.mkdir(parents=True, exist_ok=True)
         (self.scaffold_dir / "Cargo.toml").write_text(
             f"""[package]
-name = "{STATUS_ONLY_FAMILY}-core"
+name = "{STATUS_ONLY_FAMILY}"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -138,7 +138,7 @@ workspace = true
         self.implemented_dir.mkdir(parents=True, exist_ok=True)
         (self.implemented_dir / "Cargo.toml").write_text(
             f"""[package]
-name = "{IMPLEMENTED_FAMILY}-core"
+name = "{IMPLEMENTED_FAMILY}"
 
 [package.metadata.rust-factory]
 family = "{IMPLEMENTED_FAMILY}"
@@ -196,8 +196,8 @@ status = "implemented"
 
     def valid_owned_names(self) -> dict[str, set[str]]:
         return {
-            STATUS_ONLY_FAMILY: {f"{STATUS_ONLY_FAMILY}-core"},
-            IMPLEMENTED_FAMILY: {f"{IMPLEMENTED_FAMILY}-core"},
+            STATUS_ONLY_FAMILY: {f"{STATUS_ONLY_FAMILY}"},
+            IMPLEMENTED_FAMILY: {f"{IMPLEMENTED_FAMILY}"},
         }
 
     def check_registry(
@@ -458,7 +458,7 @@ status = "implemented"
     # ---- workspace inventory --------------------------------------------
 
     def test_rejects_unlisted_package_directory(self) -> None:
-        self.write_valid_workspace(members=[f"crates/{STATUS_ONLY_FAMILY}-core"])
+        self.write_valid_workspace(members=[f"crates/{STATUS_ONLY_FAMILY}"])
         self.assert_rejected(
             lambda: validator.validate_workspace_inventory(self.valid_packages())
         )
@@ -466,8 +466,8 @@ status = "implemented"
     def test_rejects_member_without_package_directory(self) -> None:
         self.write_valid_workspace(
             members=[
-                f"crates/{STATUS_ONLY_FAMILY}-core",
-                f"crates/{IMPLEMENTED_FAMILY}-core",
+                f"crates/{STATUS_ONLY_FAMILY}",
+                f"crates/{IMPLEMENTED_FAMILY}",
                 "crates/absent-core",
             ]
         )
@@ -478,9 +478,9 @@ status = "implemented"
     def test_rejects_duplicate_workspace_member(self) -> None:
         self.write_valid_workspace(
             members=[
-                f"crates/{STATUS_ONLY_FAMILY}-core",
-                f"crates/{IMPLEMENTED_FAMILY}-core",
-                f"crates/{IMPLEMENTED_FAMILY}-core",
+                f"crates/{STATUS_ONLY_FAMILY}",
+                f"crates/{IMPLEMENTED_FAMILY}",
+                f"crates/{IMPLEMENTED_FAMILY}",
             ]
         )
         self.assert_rejected(
@@ -500,7 +500,7 @@ status = "implemented"
         ):
             path.rmdir() if path.is_dir() else path.unlink()
         self.scaffold_dir.rmdir()
-        self.write_valid_workspace(members=[f"crates/{IMPLEMENTED_FAMILY}-core"])
+        self.write_valid_workspace(members=[f"crates/{IMPLEMENTED_FAMILY}"])
         self.assert_rejected(
             lambda: validator.validate_workspace_inventory(
                 [
@@ -583,7 +583,7 @@ status = "implemented"
         )
 
     def test_rejects_package_outside_known_areas(self) -> None:
-        directory = self.root / f"vendor/{IMPLEMENTED_FAMILY}-core"
+        directory = self.root / f"vendor/{IMPLEMENTED_FAMILY}"
         package = self.package(directory, IMPLEMENTED_FAMILY, "core", "implemented")
         self.assert_rejected(
             lambda: validator.validate_location_and_targets(
@@ -597,7 +597,7 @@ status = "implemented"
         registry = validator.VISION_PATH.read_text(encoding="utf-8")
         validator.VISION_PATH.write_text(
             registry.replace(
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}-core` | core | Deferred |",
+                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
                 "",
             ),
             encoding="utf-8",
@@ -623,14 +623,14 @@ status = "implemented"
     def test_rejects_duplicate_registry_row(self) -> None:
         with validator.VISION_PATH.open("a", encoding="utf-8") as registry:
             registry.write(
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}-core` | core | Scaffolded |\n"
+                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |\n"
             )
         self.assert_rejected(validator.registry_rows)
 
     def test_rejects_deferred_family_without_named_crate(self) -> None:
         registry = validator.VISION_PATH.read_text(encoding="utf-8")
         validator.VISION_PATH.write_text(
-            registry.replace(f"`{DEFERRED_FAMILY}-core`", "none"), encoding="utf-8"
+            registry.replace(f"`{DEFERRED_FAMILY}`", "none"), encoding="utf-8"
         )
         self.assert_rejected(
             lambda: self.check_registry()
@@ -640,8 +640,8 @@ status = "implemented"
         registry = validator.VISION_PATH.read_text(encoding="utf-8")
         validator.VISION_PATH.write_text(
             registry.replace(
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}-core` | core | Deferred |",
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}-core` | core | Implemented |",
+                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
+                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Implemented |",
             ),
             encoding="utf-8",
         )
@@ -653,8 +653,8 @@ status = "implemented"
         registry = validator.VISION_PATH.read_text(encoding="utf-8")
         validator.VISION_PATH.write_text(
             registry.replace(
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}-core` | core | Scaffolded |",
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}-core` | core | Implemented |",
+                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |",
+                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Implemented |",
             ),
             encoding="utf-8",
         )
@@ -668,7 +668,7 @@ status = "implemented"
         self.assert_rejected(lambda: self.check_registry(statuses))
 
     def test_rejects_deferred_family_with_package_directory(self) -> None:
-        (self.root / f"crates/{DEFERRED_FAMILY}-core").mkdir(parents=True)
+        (self.root / f"crates/{DEFERRED_FAMILY}").mkdir(parents=True)
         self.assert_rejected(
             lambda: self.check_registry()
         )
@@ -704,7 +704,7 @@ status = "implemented"
         self.assert_rejected(
             lambda: self.check_registry(
                 owned={
-                    STATUS_ONLY_FAMILY: {f"{STATUS_ONLY_FAMILY}-core"},
+                    STATUS_ONLY_FAMILY: {f"{STATUS_ONLY_FAMILY}"},
                     IMPLEMENTED_FAMILY: {f"{IMPLEMENTED_FAMILY}-mcp"},
                 }
             )
@@ -715,8 +715,8 @@ status = "implemented"
         registry = validator.VISION_PATH.read_text(encoding="utf-8")
         validator.VISION_PATH.write_text(
             registry.replace(
-                f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}-core` | core | Implemented |",
-                f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}-core` | core | Scaffolded |",
+                f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}` | core | Implemented |",
+                f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}` | core | Scaffolded |",
             ),
             encoding="utf-8",
         )
@@ -726,8 +726,8 @@ status = "implemented"
         registry = validator.VISION_PATH.read_text(encoding="utf-8")
         validator.VISION_PATH.write_text(
             registry.replace(
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}-core` | core | Scaffolded |",
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}-core` | core | "
+                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |",
+                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | "
                 "No longer Scaffolded; fully Implemented |",
             ),
             encoding="utf-8",
@@ -761,7 +761,7 @@ status = "implemented"
         )
         rows = validator.registry_rows()
         self.assertEqual(sorted(rows), ["Gadget", "Sprocket", "Widget"])
-        self.assertIn(f"`{STATUS_ONLY_FAMILY}-core`", rows["Widget"]["owner"])
+        self.assertIn(f"`{STATUS_ONLY_FAMILY}`", rows["Widget"]["owner"])
 
     # ---- package naming --------------------------------------------------
 
@@ -869,7 +869,7 @@ status = "implemented"
         self.assertEqual(self.run_main(packages), 1)
 
     def test_main_rejects_unlisted_package_directory(self) -> None:
-        self.write_valid_workspace(members=[f"crates/{STATUS_ONLY_FAMILY}-core"])
+        self.write_valid_workspace(members=[f"crates/{STATUS_ONLY_FAMILY}"])
         self.assertEqual(self.run_main(), 1)
 
     def test_main_rejects_scaffold_tree_violation(self) -> None:
@@ -880,7 +880,7 @@ status = "implemented"
         registry = validator.VISION_PATH.read_text(encoding="utf-8")
         validator.VISION_PATH.write_text(
             registry.replace(
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}-core` | core | Deferred |",
+                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
                 "",
             ),
             encoding="utf-8",

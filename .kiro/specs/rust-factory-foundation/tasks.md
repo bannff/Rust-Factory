@@ -4,7 +4,7 @@
 - [x] 2. Add shared Rust fundamentals, architecture, quality, and async guidance.
 - [x] 3. Add the local and CI quality gates.
 - [x] 4. Define the first product slice as an MCP-exposed project brick.
-- [x] 5. Define versioned project-blueprint, validation-report, generation-plan, generated-file, project-target, and error contracts in `project-core`.
+- [x] 5. Define versioned project-blueprint, validation-report, generation-plan, generated-file, project-target, and error contracts in `project`.
 - [x] 6. Implement pure blueprint validation and deterministic generation planning for a one-crate library or binary workspace.
 - [x] 7. Add focused tests for invalid names, validation findings, project targets, and plan determinism.
 - [x] 8. Define a root-confined `ProjectWriter` port and implement a filesystem adapter that rejects traversal and overwrite.
@@ -15,4 +15,4 @@
 
 ## Validation matrix
 
-Narrow command: `cargo test -p project-core -p project-fs -p project-mcp`. Required: validation/plan determinism, filesystem confinement, MCP schema, generated fixture. Conditional: proptest for name/path invariants; fuzz parser ingress. N/A: loom until shared-state adapter; canonical golden hashes (no canonical record contract).
+Narrow command: `cargo test -p project -p project-fs -p project-mcp`. Required: validation/plan determinism, filesystem confinement, MCP schema, generated fixture. Conditional: proptest for name/path invariants; fuzz parser ingress. N/A: loom until shared-state adapter; canonical golden hashes (no canonical record contract).

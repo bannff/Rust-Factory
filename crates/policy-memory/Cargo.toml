@@ -13,7 +13,7 @@ role = "memory"
 status = "implemented"
 
 [dependencies]
-policy-core = { path = "../policy-core", version = "=0.1.0" }
+policy = { path = "../policy", version = "=0.1.0" }
 
 [lints]
 workspace = true

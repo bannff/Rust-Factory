@@ -13,11 +13,11 @@
 
 ## Ownership and extraction
 
-Agent currently owns `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, and `Sandbox` contracts because it is their sole consumer. Do **not** scaffold duplicate capability cores. Extract one only when a second brick requires it: the new capability core becomes canonical owner; `agent-core` consumes it through a one-way dependency; capability core never depends on Agent; compatibility facade/deprecation is specified in that extraction spec.
+Agent currently owns `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, and `Sandbox` contracts because it is their sole consumer. Do **not** scaffold duplicate capability cores. Extract one only when a second brick requires it: the new capability core becomes canonical owner; `agent` consumes it through a one-way dependency; capability core never depends on Agent; compatibility facade/deprecation is specified in that extraction spec.
 
 No generic umbrella core exists. Extract a narrowly named, transport-independent capability core only when a stable shared contract has at least two consumers; the new core is canonical owner, existing consumers depend inward on it, it never depends on a brick or adapter, and any compatibility facade/deprecation is specified by that extraction.
 
-`policy-core` owns trusted principal/tenant grants and execution-boundary decisions. Agent retains definition policy data; Agent, Workflow, and Evaluation MCP adapters inject verified Policy decisions before their authorized domain paths.
+`policy` owns trusted principal/tenant grants and execution-boundary decisions. Agent retains definition policy data; Agent, Workflow, and Evaluation MCP adapters inject verified Policy decisions before their authorized domain paths.
 
 ## Deferred
 

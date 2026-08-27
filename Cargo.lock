@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "agent-core"
+name = "agent"
 version = "0.1.0"
 dependencies = [
  "proptest",
@@ -14,10 +14,10 @@ dependencies = [
 name = "agent-mcp"
 version = "0.1.0"
 dependencies = [
- "agent-core",
+ "agent",
  "anyhow",
  "mcp-transport",
- "policy-core",
+ "policy",
  "rmcp",
  "schemars",
  "serde",
@@ -250,7 +250,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "evaluation-core"
+name = "evaluation"
 version = "0.1.0"
 dependencies = [
  "sha2",
@@ -261,9 +261,9 @@ name = "evaluation-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "evaluation-core",
+ "evaluation",
  "mcp-transport",
- "policy-core",
+ "policy",
  "rmcp",
  "schemars",
  "serde",
@@ -275,8 +275,8 @@ dependencies = [
 name = "evaluation-memory"
 version = "0.1.0"
 dependencies = [
- "evaluation-core",
- "workflow-core",
+ "evaluation",
+ "workflow",
 ]
 
 [[package]]
@@ -570,11 +570,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "memory-core"
+name = "memory"
 version = "0.1.0"
 
 [[package]]
-name = "model-gateway-core"
+name = "model-gateway"
 version = "0.1.0"
 
 [[package]]
@@ -587,7 +587,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "observability-core"
+name = "observability"
 version = "0.1.0"
 
 [[package]]
@@ -609,7 +609,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "policy-core"
+name = "policy"
 version = "0.1.0"
 dependencies = [
  "sha2",
@@ -619,7 +619,7 @@ dependencies = [
 name = "policy-memory"
 version = "0.1.0"
 dependencies = [
- "policy-core",
+ "policy",
 ]
 
 [[package]]
@@ -641,7 +641,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "project-core"
+name = "project"
 version = "0.1.0"
 
 [[package]]
@@ -649,7 +649,7 @@ name = "project-fs"
 version = "0.1.0"
 dependencies = [
  "cap-std",
- "project-core",
+ "project",
 ]
 
 [[package]]
@@ -658,7 +658,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mcp-transport",
- "project-core",
+ "project",
  "project-fs",
  "rmcp",
  "schemars",
@@ -857,7 +857,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "sandbox-core"
+name = "sandbox"
 version = "0.1.0"
 
 [[package]]
@@ -1412,10 +1412,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "workflow-core"
+name = "workflow"
 version = "0.1.0"
 dependencies = [
- "agent-core",
+ "agent",
  "proptest",
  "serde_json",
  "sha2",
@@ -1425,16 +1425,16 @@ dependencies = [
 name = "workflow-mcp"
 version = "0.1.0"
 dependencies = [
- "agent-core",
+ "agent",
  "anyhow",
  "mcp-transport",
- "policy-core",
+ "policy",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
  "tokio",
- "workflow-core",
+ "workflow",
  "workflow-memory",
 ]
 
@@ -1442,8 +1442,8 @@ dependencies = [
 name = "workflow-memory"
 version = "0.1.0"
 dependencies = [
- "agent-core",
- "workflow-core",
+ "agent",
+ "workflow",
 ]
 
 [[package]]

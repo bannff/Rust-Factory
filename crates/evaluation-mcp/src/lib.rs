@@ -7,13 +7,13 @@
 //! Bounded MCP control-plane adapter for evaluation operations.
 
 use anyhow::{Context, Result};
-use evaluation_core::{
+use evaluation::{
     CriterionV1, EvaluationDefinitionV1, EvaluationError, EvaluationStore, LogicalEvaluationKey,
     WorkflowEvidenceReader, definition_digest, evaluate_and_store, validate_definition,
     validate_logical_key,
 };
 use mcp_transport::BoundedStdioTransport;
-use policy_core::{
+use policy::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
 };
@@ -214,9 +214,9 @@ where
         )
         .map_err(public_error)?;
         let result = match result {
-            evaluation_core::CreateOrMatch::Created(result)
-            | evaluation_core::CreateOrMatch::Existing(result) => result,
-            evaluation_core::CreateOrMatch::Conflict => return Err(anyhow::anyhow!("conflict")),
+            evaluation::CreateOrMatch::Created(result)
+            | evaluation::CreateOrMatch::Existing(result) => result,
+            evaluation::CreateOrMatch::Conflict => return Err(anyhow::anyhow!("conflict")),
         };
         result_json(&result)
     }
@@ -312,7 +312,7 @@ fn validate_get_input(input: &GetResultInput) -> Result<(), EvaluationError> {
         workflow_revision: input.workflow_revision,
     })
 }
-fn result_json(result: &evaluation_core::EvaluationResultV1) -> Result<String> {
+fn result_json(result: &evaluation::EvaluationResultV1) -> Result<String> {
     serialize(
         json!({"evaluator_id":result.logical_key.evaluator_id,"evaluator_version":result.logical_key.evaluator_version,"criterion_digest":result.logical_key.criterion_digest,"run_id":result.logical_key.workflow_run_id,"workflow_revision":result.logical_key.workflow_revision,"evidence_digest":result.evidence_digest,"verdict":verdict_name(result.verdict),"findings":result.findings,"content_hash":result.content_hash}),
     )
@@ -334,19 +334,19 @@ fn public_error(error: EvaluationError) -> anyhow::Error {
 }
 fn public_code(error: EvaluationError) -> &'static str {
     match error.public_code() {
-        evaluation_core::PublicErrorCode::InvalidRequest => "invalid_request",
-        evaluation_core::PublicErrorCode::InvalidDefinition => "invalid_definition",
-        evaluation_core::PublicErrorCode::NotFound => "not_found",
-        evaluation_core::PublicErrorCode::Conflict => "conflict",
-        evaluation_core::PublicErrorCode::LimitExceeded => "limit_exceeded",
-        evaluation_core::PublicErrorCode::OperationFailed => "operation_failed",
+        evaluation::PublicErrorCode::InvalidRequest => "invalid_request",
+        evaluation::PublicErrorCode::InvalidDefinition => "invalid_definition",
+        evaluation::PublicErrorCode::NotFound => "not_found",
+        evaluation::PublicErrorCode::Conflict => "conflict",
+        evaluation::PublicErrorCode::LimitExceeded => "limit_exceeded",
+        evaluation::PublicErrorCode::OperationFailed => "operation_failed",
     }
 }
-fn verdict_name(verdict: evaluation_core::Verdict) -> &'static str {
+fn verdict_name(verdict: evaluation::Verdict) -> &'static str {
     match verdict {
-        evaluation_core::Verdict::Pass => "pass",
-        evaluation_core::Verdict::Fail => "fail",
-        evaluation_core::Verdict::Error => "error",
+        evaluation::Verdict::Pass => "pass",
+        evaluation::Verdict::Fail => "fail",
+        evaluation::Verdict::Error => "error",
     }
 }
 fn tool_response(response: Result<String>) -> String {
@@ -365,7 +365,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use policy_core::{
+    use policy::{
         CorrelationId, GrantV1, PrincipalId, RequestId, TenantId, allow_decision, deny_decision,
     };
 
@@ -432,7 +432,7 @@ mod tests {
             &self,
             _: &str,
             _: &str,
-        ) -> Result<Option<evaluation_core::TerminalEvidenceSnapshotV1>, EvaluationError> {
+        ) -> Result<Option<evaluation::TerminalEvidenceSnapshotV1>, EvaluationError> {
             self.calls.push("reader");
             Ok(None)
         }
@@ -440,8 +440,8 @@ mod tests {
     impl EvaluationStore for Domain {
         fn create_or_match(
             &self,
-            _: evaluation_core::EvaluationResultV1,
-        ) -> Result<evaluation_core::CreateOrMatch, EvaluationError> {
+            _: evaluation::EvaluationResultV1,
+        ) -> Result<evaluation::CreateOrMatch, EvaluationError> {
             self.calls.push("store.create");
             Err(EvaluationError::AdapterFailure)
         }
@@ -449,14 +449,11 @@ mod tests {
             &self,
             _: &str,
             _: &LogicalEvaluationKey,
-        ) -> Result<Option<evaluation_core::EvaluationResultV1>, EvaluationError> {
+        ) -> Result<Option<evaluation::EvaluationResultV1>, EvaluationError> {
             self.calls.push("store.get");
             Ok(None)
         }
-        fn list(
-            &self,
-            _: &str,
-        ) -> Result<Vec<evaluation_core::EvaluationResultV1>, EvaluationError> {
+        fn list(&self, _: &str) -> Result<Vec<evaluation::EvaluationResultV1>, EvaluationError> {
             Ok(vec![])
         }
     }
@@ -635,7 +632,7 @@ mod tests {
     }
     #[test]
     fn result_projection_omits_trusted_context_and_decision() {
-        let result = evaluation_core::EvaluationResultV1 {
+        let result = evaluation::EvaluationResultV1 {
             logical_key: LogicalEvaluationKey {
                 tenant_id: "secret-tenant".to_owned(),
                 evaluator_id: "evaluator".to_owned(),
@@ -645,7 +642,7 @@ mod tests {
                 workflow_revision: 1,
             },
             evidence_digest: "b".repeat(64),
-            verdict: evaluation_core::Verdict::Pass,
+            verdict: evaluation::Verdict::Pass,
             findings: vec![],
             content_hash: "c".repeat(64),
         };

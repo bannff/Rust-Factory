@@ -2,7 +2,7 @@
 
 Evaluation independently assesses immutable terminal Workflow evidence. It SHALL not invoke Agents, mutate Workflow runs, retry execution, or choose lifecycle transitions.
 
-1. `evaluation-core` SHALL own versioned criteria, evidence references, verdicts, findings, immutable result records, and typed errors.
+1. `evaluation` SHALL own versioned criteria, evidence references, verdicts, findings, immutable result records, and typed errors.
 2. Evaluation SHALL resolve a terminal Workflow evidence snapshot through an injected read-only `WorkflowEvidenceReader` port and fail closed when evidence is missing, malformed, non-terminal, or cross-tenant.
 3. The first evaluator SHALL be deterministic: exact expected output and bounded predicates over normalized terminal evidence.
 4. Every result SHALL include evaluator ID/version, criterion/input digest, evidence reference, verdict (`pass`, `fail`, or `error`), findings, and immutable content hash.
@@ -14,7 +14,7 @@ Non-goals: model-judged evaluation, UI/dashboard suites, arbitrary scorer callba
 
 ## Normative evidence and persistence contract
 
-1. `evaluation-core` SHALL own `TerminalEvidenceSnapshotV1`, copied through a tenant-scoped read-only `WorkflowEvidenceReader::get_terminal(tenant_id, run_id)` port. Core SHALL reject a tenant mismatch, non-terminal status, missing attempt/scope digest, malformed event ordering, or evidence revision mismatch as an evaluation error—not a FAIL verdict.
+1. `evaluation` SHALL own `TerminalEvidenceSnapshotV1`, copied through a tenant-scoped read-only `WorkflowEvidenceReader::get_terminal(tenant_id, run_id)` port. Core SHALL reject a tenant mismatch, non-terminal status, missing attempt/scope digest, malformed event ordering, or evidence revision mismatch as an evaluation error—not a FAIL verdict.
 2. Canonical result bytes SHALL encode schema version, tenant ID, evaluator ID/version, logical evaluation key, criterion digest, full terminal evidence identity/revision/digest, verdict, and ordered findings with length-prefixed UTF-8 fields. SHA-256 hashes those bytes; timestamps are non-semantic metadata.
 3. `EvaluationStore::create_or_match` SHALL atomically return Created only when absent, Existing only when canonical bytes match, and Conflict when the same logical key resolves to different content. Logical key is `(tenant, evaluator_id, evaluator_version, criterion_digest, workflow_run_id, workflow_revision)`.
 4. Criteria are closed and bounded: `ExactOutput`, `EventKindCount { kind, expected }`, and `EventDataEquals { sequence, expected }`. Validation enforces criterion count, expected-string, event, finding, and snapshot byte ceilings. Unsupported or malformed data is an ERROR verdict.

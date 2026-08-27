@@ -1,6 +1,6 @@
 [package]
-name = "project-core"
-description = "Deterministic Rust workspace blueprint validation and planning."
+name = "agent"
+description = "Transport-independent agent definitions and bounded local runtime contracts."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +8,15 @@ rust-version.workspace = true
 repository.workspace = true
 
 [package.metadata.rust-factory]
-family = "project"
+family = "agent"
 role = "core"
 status = "implemented"
+
+[dependencies]
+sha2.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
 
 [lints]
 workspace = true

@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
-use project_core::{GenerationPlan, MaterializedProject, ProjectTarget, ProjectWriter};
+use project::{GenerationPlan, MaterializedProject, ProjectTarget, ProjectWriter};
 
 /// A writer confined to an opened output-directory capability.
 pub struct RootConfinedWriter {
@@ -145,7 +145,7 @@ impl std::error::Error for FsWriterError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project_core::{DefaultProjectAuthor, ProjectAuthor, ProjectBlueprint, ProjectKind};
+    use project::{DefaultProjectAuthor, ProjectAuthor, ProjectBlueprint, ProjectKind};
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};

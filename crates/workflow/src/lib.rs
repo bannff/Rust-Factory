@@ -15,7 +15,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use agent_core::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
+use agent::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 

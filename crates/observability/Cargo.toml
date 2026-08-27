@@ -1,5 +1,5 @@
 [package]
-name = "sandbox-core"
+name = "observability"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 repository.workspace = true
 
 [package.metadata.rust-factory]
-family = "sandbox"
+family = "observability"
 role = "core"
 status = "scaffolded"
 

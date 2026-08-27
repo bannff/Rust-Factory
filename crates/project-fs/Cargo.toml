@@ -14,7 +14,7 @@ status = "implemented"
 
 [dependencies]
 cap-std.workspace = true
-project-core = { path = "../project-core", version = "=0.1.0" }
+project = { path = "../project", version = "=0.1.0" }
 
 [lints]
 workspace = true

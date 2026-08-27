@@ -13,8 +13,8 @@ role = "memory"
 status = "implemented"
 
 [dependencies]
-agent-core = { path = "../agent-core", version = "=0.1.0" }
-workflow-core = { path = "../workflow-core", version = "=0.1.0" }
+agent = { path = "../agent", version = "=0.1.0" }
+workflow = { path = "../workflow", version = "=0.1.0" }
 
 [lints]
 workspace = true

@@ -1,13 +1,13 @@
 # Tasks
 
-- [x] Add adapter-facing `policy-core` dependency to `workflow-mcp` only.
+- [x] Add adapter-facing `policy` dependency to `workflow-mcp` only.
 - [x] Define host trusted-context source and Policy compatibility resolver/conversion.
 - [x] Authorize each Workflow MCP operation before domain access.
 - [x] Add recording-port deny/failure zero-call tests for validate/start/get/list/cancel.
 - [x] Add allow-path and tenant non-disclosure regression tests.
 - [x] Run Rust SME, QA, security, architecture, and `make check`.
 
-- [x] Add attempt-bound `effective_capability_ceiling` and `policy_decision_digest` to workflow-core invocation/attempt evidence contracts.
+- [x] Add attempt-bound `effective_capability_ceiling` and `policy_decision_digest` to workflow invocation/attempt evidence contracts.
 - [x] Add Policy-aware AgentInvoker compatibility adapter in workflow-mcp; no mutable request-ID state.
 - [x] Add `resolve_and_authorize(capability)` host adapter and exact deny/source failure mappings.
 - [x] Prove start grant narrowing reaches neither model scope nor agent adapters for denied capabilities.

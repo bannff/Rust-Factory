@@ -43,7 +43,7 @@ A process-level stdio smoke test launches the binary with a minimal valid config
 Before implementation acceptance, run the narrow server-related suite:
 
 ```sh
-cargo test -p agent-server -p agent-core -p agent-mcp -p policy-memory -p mcp-transport
+cargo test -p agent-server -p agent -p agent-mcp -p policy-memory -p mcp-transport
 ```
 
 Then complete QA, security, final architecture, and Rust SME gates, followed by `make check`. The README and Factory Blueprint are updated only if implementation demonstrates a durable composition convention beyond this single local binary.

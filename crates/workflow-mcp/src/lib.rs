@@ -5,10 +5,10 @@
 
 //! Bounded MCP control-plane adapter for workflow operations.
 
-use agent_core::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
+use agent::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
 use anyhow::{Context, Result};
 use mcp_transport::BoundedStdioTransport;
-use policy_core::{
+use policy::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
 };
@@ -20,7 +20,7 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use workflow_core::{
+use workflow::{
     AgentInvoker, AgentStep, InvocationPolicy, LogicalId, MAX_JSON_INPUT_BYTES, MAX_RUN_KEY_BYTES,
     PublicErrorCode, RequestContext, RunSummary, TerminalReason, WorkflowBudget,
     WorkflowDefinitionCatalog, WorkflowDefinitionV1, WorkflowError, WorkflowRunner, WorkflowStore,
@@ -161,7 +161,7 @@ pub struct CeilingAgentInvocation {
     pub agent_id: AgentId,
     pub input: String,
     pub effective_capability_ceiling: EffectiveCapabilityCeilingV1,
-    pub cancellation: workflow_core::CancellationSignal,
+    pub cancellation: workflow::CancellationSignal,
     pub deadline: std::time::Instant,
     pub downstream_idempotency_key: String,
 }
@@ -172,7 +172,7 @@ pub trait CeilingAgentRuntime: Send + Sync {
     fn invoke_with_ceiling(
         &self,
         invocation: CeilingAgentInvocation,
-    ) -> Result<agent_core::InvocationResult, WorkflowError>;
+    ) -> Result<agent::InvocationResult, WorkflowError>;
 }
 
 /// Internal workflow invoker for attempt policy evidence verified by `WorkflowPolicyContextResolver`.
@@ -192,9 +192,9 @@ impl<R: CeilingAgentRuntime> AgentInvoker for PolicyAwareAgentInvoker<R> {
 
     fn invoke(
         &self,
-        request: workflow_core::AgentInvocationRequest,
-        evidence: &mut dyn workflow_core::InvocationEvidenceSink,
-    ) -> Result<workflow_core::AgentInvocationResult, WorkflowError> {
+        request: workflow::AgentInvocationRequest,
+        evidence: &mut dyn workflow::InvocationEvidenceSink,
+    ) -> Result<workflow::AgentInvocationResult, WorkflowError> {
         if request.policy_decision_digest.len() != 64
             || !request
                 .policy_decision_digest
@@ -212,11 +212,8 @@ impl<R: CeilingAgentRuntime> AgentInvoker for PolicyAwareAgentInvoker<R> {
             deadline: request.deadline,
             downstream_idempotency_key: request.downstream_idempotency_key,
         })?;
-        evidence.emit(workflow_core::InvocationEvidence::new(
-            "result",
-            result.output,
-        )?)?;
-        Ok(workflow_core::AgentInvocationResult {
+        evidence.emit(workflow::InvocationEvidence::new("result", result.output)?)?;
+        Ok(workflow::AgentInvocationResult {
             capability_scope_digest: result.capability_scope_digest,
         })
     }
@@ -408,13 +405,13 @@ fn summary_value(summary: &RunSummary) -> serde_json::Value {
 fn summary_json(summary: &RunSummary) -> Result<String> {
     serialize(summary_value(summary))
 }
-fn status_name(status: workflow_core::RunStatus) -> &'static str {
+fn status_name(status: workflow::RunStatus) -> &'static str {
     match status {
-        workflow_core::RunStatus::Pending => "pending",
-        workflow_core::RunStatus::Running => "running",
-        workflow_core::RunStatus::Succeeded => "succeeded",
-        workflow_core::RunStatus::Failed => "failed",
-        workflow_core::RunStatus::Cancelled => "cancelled",
+        workflow::RunStatus::Pending => "pending",
+        workflow::RunStatus::Running => "running",
+        workflow::RunStatus::Succeeded => "succeeded",
+        workflow::RunStatus::Failed => "failed",
+        workflow::RunStatus::Cancelled => "cancelled",
     }
 }
 fn reason_name(reason: TerminalReason) -> &'static str {
@@ -514,10 +511,10 @@ mod compatibility_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    use policy_core::{
+    use policy::{
         CorrelationId, GrantV1, PrincipalId, RequestId, TenantId, allow_decision, deny_decision,
     };
-    use workflow_core::{
+    use workflow::{
         AgentInvocationRequest, CancellationSignal, InvocationEvidence, InvocationEvidenceSink,
         Transition, TransitionResult,
     };
@@ -535,9 +532,9 @@ mod compatibility_tests {
     impl WorkflowStore for RecordingDomain {
         fn create_or_return(
             &self,
-            _: workflow_core::StartIdentity,
-            _: workflow_core::Run,
-        ) -> std::result::Result<workflow_core::CreateRun, WorkflowError> {
+            _: workflow::StartIdentity,
+            _: workflow::Run,
+        ) -> std::result::Result<workflow::CreateRun, WorkflowError> {
             self.record("store.create");
             Err(WorkflowError::AdapterFailure)
         }
@@ -545,14 +542,11 @@ mod compatibility_tests {
             &self,
             _: &LogicalId,
             _: &LogicalId,
-        ) -> std::result::Result<Option<workflow_core::Run>, WorkflowError> {
+        ) -> std::result::Result<Option<workflow::Run>, WorkflowError> {
             self.record("store.get");
             Err(WorkflowError::AdapterFailure)
         }
-        fn list(
-            &self,
-            _: &LogicalId,
-        ) -> std::result::Result<Vec<workflow_core::Run>, WorkflowError> {
+        fn list(&self, _: &LogicalId) -> std::result::Result<Vec<workflow::Run>, WorkflowError> {
             self.record("store.list");
             Err(WorkflowError::AdapterFailure)
         }
@@ -561,7 +555,7 @@ mod compatibility_tests {
             _: &LogicalId,
             _: &LogicalId,
             _: u64,
-            _: workflow_core::RunStatus,
+            _: workflow::RunStatus,
             _: Transition,
         ) -> std::result::Result<TransitionResult, WorkflowError> {
             self.record("store.transition");
@@ -586,7 +580,7 @@ mod compatibility_tests {
         fn invoke_with_ceiling(
             &self,
             _: CeilingAgentInvocation,
-        ) -> std::result::Result<agent_core::InvocationResult, WorkflowError> {
+        ) -> std::result::Result<agent::InvocationResult, WorkflowError> {
             self.record("invoker.invoke");
             Err(WorkflowError::AdapterFailure)
         }
@@ -886,12 +880,12 @@ mod compatibility_tests {
         fn invoke_with_ceiling(
             &self,
             invocation: CeilingAgentInvocation,
-        ) -> std::result::Result<agent_core::InvocationResult, WorkflowError> {
+        ) -> std::result::Result<agent::InvocationResult, WorkflowError> {
             self.calls
                 .lock()
                 .expect("runtime calls lock")
                 .push(invocation);
-            Ok(agent_core::InvocationResult {
+            Ok(agent::InvocationResult {
                 capability_scope_digest: "scope".to_owned(),
                 events: vec![],
                 output: "output".to_owned(),
@@ -996,14 +990,14 @@ mod composition_tests {
     use std::sync::{Arc, Barrier, Mutex};
     use std::thread;
 
-    use agent_core::{
+    use agent::{
         AgentDefinitionV1, AgentRegistry, CommunicationPolicy, DefinitionError, DefinitionVersion,
         DenySandbox, ExecutionLimits, InMemoryDefinitionStore, InMemoryMemoryStore,
         KnowledgePolicy, LocalAgentRuntime, MemoryPolicy, ModelPolicy, ModelProvider, ModelRequest,
         ModelResponse, SandboxPolicy, StaticKnowledgeStore, StaticReferenceCatalog, ToolCall,
         ToolDescriptor, ToolRegistry, ToolRequest,
     };
-    use policy_core::{CorrelationId, GrantV1, PrincipalId, RequestId, TenantId, allow_decision};
+    use policy::{CorrelationId, GrantV1, PrincipalId, RequestId, TenantId, allow_decision};
     use workflow_memory::{InMemoryWorkflowStore, StaticWorkflowCatalog};
 
     const AGENT_DEFINITION_TOOLS: [&str; 2] = ["read", "write"];
@@ -1171,7 +1165,7 @@ mod composition_tests {
         fn invoke_with_ceiling(
             &self,
             invocation: CeilingAgentInvocation,
-        ) -> Result<agent_core::InvocationResult, WorkflowError> {
+        ) -> Result<agent::InvocationResult, WorkflowError> {
             LocalAgentRuntime::new(
                 &self.registry,
                 &self.model,
@@ -1206,12 +1200,12 @@ mod composition_tests {
         fn invoke_with_ceiling(
             &self,
             invocation: CeilingAgentInvocation,
-        ) -> Result<agent_core::InvocationResult, WorkflowError> {
+        ) -> Result<agent::InvocationResult, WorkflowError> {
             self.calls
                 .lock()
                 .expect("runtime calls lock")
                 .push(invocation);
-            Ok(agent_core::InvocationResult {
+            Ok(agent::InvocationResult {
                 capability_scope_digest: "scope".to_owned(),
                 events: vec![],
                 output: "output".to_owned(),
@@ -1246,7 +1240,7 @@ mod composition_tests {
         fn invoke_with_ceiling(
             &self,
             invocation: CeilingAgentInvocation,
-        ) -> Result<agent_core::InvocationResult, WorkflowError> {
+        ) -> Result<agent::InvocationResult, WorkflowError> {
             self.calls
                 .lock()
                 .expect("runtime calls lock")
@@ -1256,7 +1250,7 @@ mod composition_tests {
             if invocation.cancellation.is_cancelled() {
                 return Err(WorkflowError::Conflict);
             }
-            Ok(agent_core::InvocationResult {
+            Ok(agent::InvocationResult {
                 capability_scope_digest: "scope".to_owned(),
                 events: vec![],
                 output: "output".to_owned(),

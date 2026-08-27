@@ -6,7 +6,7 @@ workflow-mcp ────┼──> mcp-transport ───> rmcp / Tokio framin
  evaluation-mcp ─┤
 project-mcp ─────┘
 
-all *-core crates: no dependency on mcp-transport, rmcp, Tokio, or futures
+all capability library crates: no dependency on mcp-transport, rmcp, Tokio, or futures
 ```
 
 `mcp-transport` owns the reusable server-side boundary already proved by Agent, Workflow, and Evaluation MCP adapters. Its public surface is intentionally narrow:

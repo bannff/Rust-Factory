@@ -1,6 +1,6 @@
 # Tasks: Workflow
 
-- [x] 1. Create `workflow-core` with typed definitions, context, run/attempt/event/status/terminal-reason/budget/error contracts.
+- [x] 1. Create `workflow` with typed definitions, context, run/attempt/event/status/terminal-reason/budget/error contracts.
 - [x] 2. Define core-owned `WorkflowStore` and `AgentInvoker` ports plus canonical idempotency identity.
 - [x] 3. Implement validation, tenant-safe visibility, legal state transitions, and bounded evidence rules.
 - [x] 4. Create `workflow-memory` with deterministic in-memory store and static agent invoker adapters.
@@ -14,11 +14,11 @@
 
 ## Architecture constraints
 
-- `workflow-core` may depend only on stable core contracts, including `agent-core` for `AgentId`.
-- `workflow-memory` depends on `workflow-core`; `workflow-mcp` depends on `workflow-core` plus MCP/serialization crates. Neither is a `workflow-core` dependency.
+- `workflow` may depend only on stable core contracts, including `agent` for `AgentId`.
+- `workflow-memory` depends on `workflow`; `workflow-mcp` depends on `workflow` plus MCP/serialization crates. Neither is a `workflow` dependency.
 - Add deterministic tests for atomic transition conflicts and cancellation-versus-late-completion publication.
 - Derive tenant/principal context from an injected authenticated-session resolver, never MCP request fields.
 
 ## Validation matrix
 
-Narrow command: `cargo test -p workflow-core -p workflow-memory -p workflow-mcp`. Required: idempotency, tenant isolation, transitions, bounded evidence, local cancellation race, MCP context. Conditional: proptest start identities; loom and recovery tests only with persistent/concurrent adapters; fuzz canonical JSON. Golden vectors apply to canonical input identities only.
+Narrow command: `cargo test -p workflow -p workflow-memory -p workflow-mcp`. Required: idempotency, tenant isolation, transitions, bounded evidence, local cancellation race, MCP context. Conditional: proptest start identities; loom and recovery tests only with persistent/concurrent adapters; fuzz canonical JSON. Golden vectors apply to canonical input identities only.

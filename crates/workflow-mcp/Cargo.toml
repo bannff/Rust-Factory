@@ -13,16 +13,16 @@ role = "mcp"
 status = "migration-pending"
 
 [dependencies]
-agent-core = { path = "../agent-core", version = "=0.1.0" }
+agent = { path = "../agent", version = "=0.1.0" }
 anyhow.workspace = true
 mcp-transport = { path = "../mcp-transport", version = "=0.1.0" }
-policy-core = { path = "../policy-core", version = "=0.1.0" }
+policy = { path = "../policy", version = "=0.1.0" }
 rmcp.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
-workflow-core = { path = "../workflow-core", version = "=0.1.0" }
+workflow = { path = "../workflow", version = "=0.1.0" }
 
 [dev-dependencies]
 workflow-memory = { path = "../workflow-memory", version = "=0.1.0" }

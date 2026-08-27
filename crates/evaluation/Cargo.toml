@@ -1,5 +1,6 @@
 [package]
-name = "memory-core"
+name = "evaluation"
+description = "Deterministic, immutable evaluation contracts for terminal workflow evidence."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,9 +8,12 @@ rust-version.workspace = true
 repository.workspace = true
 
 [package.metadata.rust-factory]
-family = "memory"
+family = "evaluation"
 role = "core"
-status = "scaffolded"
+status = "implemented"
+
+[dependencies]
+sha2.workspace = true
 
 [lints]
 workspace = true

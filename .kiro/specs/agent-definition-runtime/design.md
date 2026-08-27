@@ -3,7 +3,7 @@
 ## Architecture
 
 ```text
-agent-core
+agent
   definition + registry + policy + invocation contracts
   DefinitionStore / ModelProvider / ToolRegistry / MemoryStore /
   KnowledgeStore / Sandbox traits

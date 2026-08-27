@@ -7,7 +7,7 @@ use std::error::Error;
 
 use anyhow::{Context, Result};
 use mcp_transport::BoundedStdioTransport;
-use project_core::{
+use project::{
     DefaultProjectAuthor, FindingSeverity, ProjectAuthor, ProjectBlueprint, ProjectKind,
     ProjectTarget, ProjectWriter, ValidationCode,
 };

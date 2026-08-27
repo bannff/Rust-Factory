@@ -14,7 +14,7 @@ project core ──> ValidationReport + GenerationPlan
       │                              └── filesystem adapter: safe materialization
 ```
 
-- `crates/project-core` — blueprint, validation, planning, and writer-port contracts.
+- `crates/project` — blueprint, validation, planning, and writer-port contracts.
 - `crates/project-fs` — root-confined filesystem materialization.
 - `crates/project-mcp` — bounded MCP adapter using the official `rmcp` SDK.
 

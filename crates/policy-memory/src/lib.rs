@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use policy_core::{
+use policy::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, GrantV1, PolicyError,
     PolicyResolver, PrincipalId, TenantId, allow_decision, canonical_grant, deny_decision,
 };
@@ -93,7 +93,7 @@ impl PolicyResolver for StaticPolicyResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use policy_core::{CorrelationId, RequestId, SafeDenyReasonV1, TrustedContextV1};
+    use policy::{CorrelationId, RequestId, SafeDenyReasonV1, TrustedContextV1};
 
     fn tenant(value: &str) -> TenantId {
         TenantId::new(value).expect("tenant")

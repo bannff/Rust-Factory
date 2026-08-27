@@ -6,7 +6,7 @@ Prove that Rust Factory can define, register, inspect, and locally invoke a boun
 
 ## Functional requirements
 
-1. The slice SHALL provide an `agent-core` brick that owns versioned agent definitions, validation, registry rules, capability policies, local invocation contracts, and typed errors.
+1. The slice SHALL provide an `agent` brick that owns versioned agent definitions, validation, registry rules, capability policies, local invocation contracts, and typed errors.
 2. An agent definition SHALL be data: ID, display metadata, model policy/reference, instructions, skills, steering references, allowed tool IDs, memory/knowledge/sandbox/communication policies, and positive execution limits.
 3. Agent IDs SHALL use the stable lowercase `[a-z0-9][a-z0-9_-]{0,127}` form. Definitions SHALL reject unknown fields, invalid references, empty required fields, and invalid limits.
 4. The registry SHALL merge immutable built-ins before user definitions. A built-in ID wins any collision; user create, update, or delete operations SHALL reject built-in IDs.

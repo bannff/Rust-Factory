@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use agent_core::AgentId;
-use workflow_core::{
+use agent::AgentId;
+use workflow::{
     AgentInvocationRequest, AgentInvocationResult, AgentInvoker, CreateRun, InvocationEvidence,
     InvocationEvidenceSink, LogicalId, StartIdentity, StartKey, Transition, TransitionResult,
     WorkflowDefinitionCatalog, WorkflowDefinitionV1, WorkflowError, WorkflowStore,
@@ -21,7 +21,7 @@ pub struct InMemoryWorkflowStore {
 }
 #[derive(Default)]
 struct State {
-    runs: BTreeMap<LogicalId, workflow_core::Run>,
+    runs: BTreeMap<LogicalId, workflow::Run>,
     identities: BTreeMap<StartIdentity, LogicalId>,
     keys: BTreeMap<StartKey, StartIdentity>,
 }
@@ -29,7 +29,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
     fn create_or_return(
         &self,
         identity: StartIdentity,
-        run: workflow_core::Run,
+        run: workflow::Run,
     ) -> Result<CreateRun, WorkflowError> {
         let mut state = self
             .state
@@ -51,13 +51,13 @@ impl WorkflowStore for InMemoryWorkflowStore {
             || run.workflow_version != identity.key.workflow_version
             || run.run_key != identity.key.run_key
             || run.input_digest != identity.input_digest
-            || run.status != workflow_core::RunStatus::Pending
+            || run.status != workflow::RunStatus::Pending
             || run.revision != 0
             || run.terminal_reason.is_some()
             || run.attempt.is_some()
             || !run.events.is_empty()
             || run.max_evidence_bytes == 0
-            || run.max_evidence_bytes > workflow_core::MAX_EVIDENCE_BYTES
+            || run.max_evidence_bytes > workflow::MAX_EVIDENCE_BYTES
         {
             return Err(WorkflowError::InvalidRequest);
         }
@@ -70,7 +70,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
         &self,
         tenant: &LogicalId,
         run: &LogicalId,
-    ) -> Result<Option<workflow_core::Run>, WorkflowError> {
+    ) -> Result<Option<workflow::Run>, WorkflowError> {
         Ok(self
             .state
             .lock()
@@ -80,7 +80,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
             .filter(|value| &value.context.tenant_id == tenant)
             .cloned())
     }
-    fn list(&self, tenant: &LogicalId) -> Result<Vec<workflow_core::Run>, WorkflowError> {
+    fn list(&self, tenant: &LogicalId) -> Result<Vec<workflow::Run>, WorkflowError> {
         Ok(self
             .state
             .lock()
@@ -96,7 +96,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
         tenant: &LogicalId,
         run_id: &LogicalId,
         revision: u64,
-        status: workflow_core::RunStatus,
+        status: workflow::RunStatus,
         transition: Transition,
     ) -> Result<TransitionResult, WorkflowError> {
         let mut state = self
@@ -127,7 +127,7 @@ impl WorkflowStore for InMemoryWorkflowStore {
 
 #[derive(Clone, Default)]
 pub struct StaticWorkflowCatalog {
-    definitions: BTreeMap<(LogicalId, workflow_core::WorkflowVersion), WorkflowDefinitionV1>,
+    definitions: BTreeMap<(LogicalId, workflow::WorkflowVersion), WorkflowDefinitionV1>,
 }
 impl StaticWorkflowCatalog {
     #[must_use]
@@ -144,7 +144,7 @@ impl WorkflowDefinitionCatalog for StaticWorkflowCatalog {
     fn resolve(
         &self,
         id: &LogicalId,
-        version: workflow_core::WorkflowVersion,
+        version: workflow::WorkflowVersion,
     ) -> Result<Option<WorkflowDefinitionV1>, WorkflowError> {
         Ok(self.definitions.get(&(id.clone(), version)).cloned())
     }
@@ -201,7 +201,7 @@ impl AgentInvoker for StaticAgentInvoker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use workflow_core::{
+    use workflow::{
         AgentStep, Attempt, AttemptStatus, RequestContext, RunStatus, TerminalReason,
         WorkflowBudget, WorkflowEvent, WorkflowRunner, WorkflowVersion,
     };
@@ -301,14 +301,14 @@ mod tests {
             },
             input_digest: "digest".to_owned(),
         };
-        let run = |identity: &StartIdentity, name: &str| workflow_core::Run {
+        let run = |identity: &StartIdentity, name: &str| workflow::Run {
             id: id(name),
             context: context("tenant"),
             workflow_id: id("workflow"),
             workflow_version: WorkflowVersion::V1,
             run_key: identity.key.run_key.clone(),
             input_digest: identity.input_digest.clone(),
-            max_evidence_bytes: workflow_core::MAX_EVIDENCE_BYTES,
+            max_evidence_bytes: workflow::MAX_EVIDENCE_BYTES,
             status: RunStatus::Pending,
             revision: 0,
             terminal_reason: None,
@@ -405,7 +405,7 @@ mod tests {
         let store = InMemoryWorkflowStore::default();
         let mut evidence = vec![
             InvocationEvidence::new("agent_event", "x").expect("evidence");
-            workflow_core::MAX_EVENTS - 1
+            workflow::MAX_EVENTS - 1
         ];
         evidence.push(InvocationEvidence::new("result", "x").expect("result"));
         let service = WorkflowRunner::new(
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(run.terminal_reason, Some(TerminalReason::InvocationFailed));
         assert_eq!(
             service.cancel(&id("tenant"), run.id.clone()),
-            Ok(workflow_core::RunSummary::from(&run))
+            Ok(workflow::RunSummary::from(&run))
         );
     }
     #[test]
@@ -442,7 +442,7 @@ mod tests {
         let previous = Attempt {
             id: id("attempt"),
             agent_id: AgentId::new("agent").expect("agent"),
-            effective_capability_ceiling: agent_core::EffectiveCapabilityCeilingV1 {
+            effective_capability_ceiling: agent::EffectiveCapabilityCeilingV1 {
                 allowed_tool_ids: vec![],
                 memory_enabled: false,
                 knowledge_enabled: false,
@@ -455,14 +455,14 @@ mod tests {
             result: None,
             error: None,
         };
-        let run = workflow_core::Run {
+        let run = workflow::Run {
             id: id("run"),
             context: context("tenant"),
             workflow_id: id("workflow"),
             workflow_version: WorkflowVersion::V1,
             run_key: "key".to_owned(),
             input_digest: "digest".to_owned(),
-            max_evidence_bytes: workflow_core::MAX_EVIDENCE_BYTES,
+            max_evidence_bytes: workflow::MAX_EVIDENCE_BYTES,
             status: RunStatus::Running,
             revision: 1,
             terminal_reason: None,
@@ -494,7 +494,7 @@ mod cancellation_tests {
     use super::*;
     use std::sync::{Arc, Barrier};
     use std::thread;
-    use workflow_core::{
+    use workflow::{
         AgentStep, RequestContext, RunStatus, WorkflowBudget, WorkflowRunner, WorkflowVersion,
     };
 
@@ -582,8 +582,8 @@ mod cancellation_tests {
 #[cfg(test)]
 mod policy_attempt_tests {
     use super::*;
-    use agent_core::EffectiveCapabilityCeilingV1;
-    use workflow_core::{
+    use agent::EffectiveCapabilityCeilingV1;
+    use workflow::{
         AgentStep, Attempt, AttemptStatus, InvocationPolicy, RequestContext, Run, RunStatus,
         TerminalReason, WorkflowBudget, WorkflowEvent, WorkflowRunner, WorkflowVersion,
         transition_is_valid,
@@ -620,7 +620,7 @@ mod policy_attempt_tests {
             workflow_version: WorkflowVersion::V1,
             run_key: "key".to_owned(),
             input_digest: "digest".to_owned(),
-            max_evidence_bytes: workflow_core::MAX_EVIDENCE_BYTES,
+            max_evidence_bytes: workflow::MAX_EVIDENCE_BYTES,
             status: RunStatus::Running,
             revision: 1,
             terminal_reason: None,

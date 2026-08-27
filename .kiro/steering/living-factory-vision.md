@@ -37,7 +37,7 @@ A linked edge binary is a local composition topology, not a mesh adapter. It inh
 ## Three planes
 
 1. **Authoring plane — MCP.** Agents discover bricks and use bounded tools to create projects, configure agents, retrieve steering/skills/knowledge, operate workflows, and inspect evaluation evidence.
-2. **Execution plane — native Rust.** A deployed agent uses typed ports such as `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, `Sandbox`, and `ModelProvider`, all currently owned by `agent-core`. Concrete implementations remain replaceable adapters. A `MessageBus` port is intended but does not exist; see the Message bus row in the portfolio registry.
+2. **Execution plane — native Rust.** A deployed agent uses typed ports such as `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, `Sandbox`, and `ModelProvider`, all currently owned by `agent`. Concrete implementations remain replaceable adapters. A `MessageBus` port is intended but does not exist; see the Message bus row in the portfolio registry.
 3. **Mesh/data plane — native peer protocol.** Deployed peers discover, communicate, and replicate explicitly selected data while remaining capable of offline operation and recovery.
 
 ## Agentic control-plane ownership
@@ -60,7 +60,7 @@ A mature brick may be split into:
 
 ```text
 crates/
-  <brick>-core       domain models, rules, traits, and errors
+  <brick>       domain models, rules, traits, and errors
   <brick>-memory     deterministic local adapter
   <brick>-<adapter>  optional storage/model/network adapter
   <brick>-mcp        MCP control-plane adapter library
@@ -85,7 +85,7 @@ GitHub [Issue #11](https://github.com/bannff/Rust-Factory/issues/11) tracks the 
 A **status-only** package is the narrow intermediate step for a family that is committed but not yet designed:
 
 ```text
-crates/<family>-core/
+crates/<family>/
   Cargo.toml                         # [package.metadata.rust-factory]
   src/{lib.rs,model.rs,validation.rs,error.rs,port.rs,service.rs}
   tests/public_contract.rs
@@ -99,27 +99,27 @@ Every package in the workspace declares `family`, `role`, and `status` in `[pack
 
 | Family | Taxonomy | Owning crate | Mature shape when justified | Current state |
 |---|---|---|---|---|
-| Project authoring | Capability | `project-core` | `project-core`, `project-fs`, `project-mcp`, `project-server` | Implemented; MCP stdio lifecycle migration pending |
-| Policy / authorization | Capability | `policy-core` | `policy-core`, local/durable/provider resolvers, MCP, server | Implemented; process-boundary semantics pending (#5) |
-| Agent | Capability | `agent-core` | core, model/tool/memory/knowledge/sandbox adapters, MCP, server | Implemented; local server #6 pending |
-| Workflow | Capability | `workflow-core` | `workflow-core`, local/durable adapters, MCP, server | Implemented; durable adapter pending |
-| Evaluation | Capability | `evaluation-core` | `evaluation-core`, local/evaluator adapters, MCP, server | Implemented; evaluator portfolio pending |
-| Model gateway | Capability | `model-gateway-core` | core, provider adapters, MCP, server | Scaffolded; provisional `ModelProvider` port stays in `agent-core` until extraction is separately gated |
-| Memory | Capability | `memory-core` | core, memory/durable/index adapters, MCP, server | Scaffolded; provisional `MemoryStore` port stays in `agent-core` until extraction is separately gated |
-| Sandbox | Capability | `sandbox-core` | core, deny/local/confined adapters covering isolated tool and test execution with captured evidence, MCP, server | Scaffolded; provisional `Sandbox` port, `DenySandbox`, and the `ToolRegistry` port stay in `agent-core` |
-| Observability / audit | Capability | `observability-core` | core, logging/tracing/metrics/audit adapters, MCP, server | Scaffolded; no port yet — `agent-core::InvocationEvent` is returned in band, not published |
-| Workspace governance | Capability | `workspace-governance-core` | core, Cargo/governance adapters, MCP, server | Deferred; the `make check` validator covers this ground for now |
-| Identity / authentication | Capability | `identity-core` | core, trusted-host/provider adapters, MCP, server | Deferred; process-boundary Policy (#5) is a prerequisite and local single-process operation needs no principal authentication |
-| Knowledge | Capability | `knowledge-core` | core, local/index/vector/graph adapters, MCP, server | Deferred; the `KnowledgeStore` port and `StaticKnowledgeStore` remain owned by `agent-core` |
-| Verification | Capability | `verification-core` | core, attestation/provenance/reproducibility adapters, MCP, server | Deferred; a live-fact check is not a capability — Evaluation owns acceptance and Observability owns evidence. Justified only by signed attestation, provenance chains, or reproducible-artifact proof across multiple consumers |
-| Message bus / events | Capability | `message-bus-core` | core, local/durable/broker adapters, MCP, server | Deferred; no `MessageBus` port exists and a separate semantic spec is required |
-| Cache | Capability | `cache-core` | core, local/Redis-like adapters, MCP, server | Deferred; separate semantic spec required. Distinct from storage: a cache may lose everything at restart without being wrong |
-| Graph / provenance | Capability | `graph-core` | core, local/database adapters, MCP, server | Deferred; separate semantic spec required |
-| Notification | Capability | `notification-core` | core, local/provider adapters, MCP, server | Deferred; separate semantic spec required |
+| Project authoring | Capability | `project` | `project`, `project-fs`, `project-mcp`, `project-server` | Implemented; MCP stdio lifecycle migration pending |
+| Policy / authorization | Capability | `policy` | `policy`, local/durable/provider resolvers, MCP, server | Implemented; process-boundary semantics pending (#5) |
+| Agent | Capability | `agent` | core, model/tool/memory/knowledge/sandbox adapters, MCP, server | Implemented; local server #6 pending |
+| Workflow | Capability | `workflow` | `workflow`, local/durable adapters, MCP, server | Implemented; durable adapter pending |
+| Evaluation | Capability | `evaluation` | `evaluation`, local/evaluator adapters, MCP, server | Implemented; evaluator portfolio pending |
+| Model gateway | Capability | `model-gateway` | core, provider adapters, MCP, server | Scaffolded; provisional `ModelProvider` port stays in `agent` until extraction is separately gated |
+| Memory | Capability | `memory` | core, memory/durable/index adapters, MCP, server | Scaffolded; provisional `MemoryStore` port stays in `agent` until extraction is separately gated |
+| Sandbox | Capability | `sandbox` | core, deny/local/confined adapters covering isolated tool and test execution with captured evidence, MCP, server | Scaffolded; provisional `Sandbox` port, `DenySandbox`, and the `ToolRegistry` port stay in `agent` |
+| Observability / audit | Capability | `observability` | core, logging/tracing/metrics/audit adapters, MCP, server | Scaffolded; no port yet — `agent::InvocationEvent` is returned in band, not published |
+| Workspace governance | Capability | `workspace-governance` | core, Cargo/governance adapters, MCP, server | Deferred; the `make check` validator covers this ground for now |
+| Identity / authentication | Capability | `identity` | core, trusted-host/provider adapters, MCP, server | Deferred; process-boundary Policy (#5) is a prerequisite and local single-process operation needs no principal authentication |
+| Knowledge | Capability | `knowledge` | core, local/index/vector/graph adapters, MCP, server | Deferred; the `KnowledgeStore` port and `StaticKnowledgeStore` remain owned by `agent` |
+| Verification | Capability | `verification` | core, attestation/provenance/reproducibility adapters, MCP, server | Deferred; a live-fact check is not a capability — Evaluation owns acceptance and Observability owns evidence. Justified only by signed attestation, provenance chains, or reproducible-artifact proof across multiple consumers |
+| Message bus / events | Capability | `message-bus` | core, local/durable/broker adapters, MCP, server | Deferred; no `MessageBus` port exists and a separate semantic spec is required |
+| Cache | Capability | `cache` | core, local/Redis-like adapters, MCP, server | Deferred; separate semantic spec required. Distinct from storage: a cache may lose everything at restart without being wrong |
+| Graph / provenance | Capability | `graph` | core, local/database adapters, MCP, server | Deferred; separate semantic spec required |
+| Notification | Capability | `notification` | core, local/provider adapters, MCP, server | Deferred; separate semantic spec required |
 | Configuration | Adapter infrastructure | No capability crate; server config modules | bounded config-source adapters owned by composition binaries | Agent server config specified |
 | Storage | Adapter infrastructure | No generic storage crate | capability-owned persistence ports and adapters | Local adapters exist; generic facade prohibited |
 | HTTP / integrations | Adapter infrastructure | No capability crate | consumed-port remote/integration adapters | Deferred pending #5 |
-| Browser automation | Optional capability/domain pack | `browser-core` only when an approved automation contract exists | core, bounded browser adapters, MCP, server | Optional; not scaffolded |
+| Browser automation | Optional capability/domain pack | `browser` only when an approved automation contract exists | core, bounded browser adapters, MCP, server | Optional; not scaffolded |
 | MCP transport | Adapter infrastructure | `mcp-transport` | bounded server transport adapter plus shared registration, schema, and error-projection helpers that keep each `-mcp` crate thin | Implemented; lifecycle migration pending in consumers |
 | MCP / API / worker / edge | Composition bases | No core; one binary crate per deployable under `projects/<name>/` | selected binary roots plus config/composition modules | Agent server #6 specified; `projects/` not yet created |
 | Data / learning | Optional domain packs | Portfolio registry only until a concrete product contract exists | dataset/ML/learning capability families | Deferred |

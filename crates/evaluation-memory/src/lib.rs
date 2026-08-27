@@ -7,12 +7,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use evaluation_core::{
+use evaluation::{
     CreateOrMatch, EvaluationError, EvaluationResultV1, EvaluationStore, EvidenceEventV1,
     LogicalEvaluationKey, TerminalEvidenceSnapshotV1, TerminalReason, TerminalStatus,
     WorkflowEvidenceReader, validate_result,
 };
-use workflow_core::{RunStatus, TerminalReason as WorkflowTerminalReason, WorkflowStore};
+use workflow::{RunStatus, TerminalReason as WorkflowTerminalReason, WorkflowStore};
 
 #[derive(Clone)]
 pub struct WorkflowStoreEvidenceReader<S> {
@@ -30,9 +30,8 @@ impl<S: WorkflowStore> WorkflowEvidenceReader for WorkflowStoreEvidenceReader<S>
         tenant_id: &str,
         run_id: &str,
     ) -> Result<Option<TerminalEvidenceSnapshotV1>, EvaluationError> {
-        let tenant =
-            workflow_core::LogicalId::new(tenant_id).map_err(|_| EvaluationError::NotFound)?;
-        let run = workflow_core::LogicalId::new(run_id).map_err(|_| EvaluationError::NotFound)?;
+        let tenant = workflow::LogicalId::new(tenant_id).map_err(|_| EvaluationError::NotFound)?;
+        let run = workflow::LogicalId::new(run_id).map_err(|_| EvaluationError::NotFound)?;
         let Some(run) = self
             .store
             .get(&tenant, &run)
@@ -154,11 +153,11 @@ mod tests {
         let mut result = EvaluationResultV1 {
             logical_key: key(tenant),
             evidence_digest: "b".repeat(64),
-            verdict: evaluation_core::Verdict::Pass,
+            verdict: evaluation::Verdict::Pass,
             findings: vec![],
             content_hash: String::new(),
         };
-        result.content_hash = evaluation_core::result_digest(&result).expect("digest");
+        result.content_hash = evaluation::result_digest(&result).expect("digest");
         result
     }
 
@@ -198,7 +197,7 @@ mod tests {
         ));
         let mut different = result("tenant");
         different.findings.push("different".to_owned());
-        different.content_hash = evaluation_core::result_digest(&different).expect("digest");
+        different.content_hash = evaluation::result_digest(&different).expect("digest");
         assert_eq!(
             store.create_or_match(different).expect("write"),
             CreateOrMatch::Conflict

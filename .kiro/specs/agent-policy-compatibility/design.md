@@ -9,7 +9,7 @@ agent-mcp compatibility adapter → AgentRegistry / LocalAgentRuntime
                                               ↓ invoke only
                               GrantV1 → EffectiveCapabilityCeilingV1
                                               ↓
-                                  policy-neutral agent-core ports
+                                  policy-neutral agent ports
 ```
 
 `AgentPolicyContextResolver<T, P>` lives in `agent-mcp`. It owns a host `TrustedContextSource` and `PolicyResolver`, resolves trusted context once, authorizes one exact `CapabilityV1`, canonicalizes the returned Allow grant, and verifies the request-bound digest. Its authorization operation and resolved handoff are private. `AgentDefinitionMcp::new` accepts only this verified resolver, preventing an embedding caller from fabricating a tenant or Allow-looking digest.

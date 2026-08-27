@@ -325,7 +325,7 @@ def validate_status_only_placement(manifest_path: Path, family: str, role: str) 
         raise ValueError(
             f"{relative(manifest_path)}: status-only packages must use role = \"core\""
         )
-    expected = ROOT / LIBRARY_DIR / f"{family}-core" / "Cargo.toml"
+    expected = ROOT / LIBRARY_DIR / f"{family}" / "Cargo.toml"
     if repo_relative(manifest_path) != repo_relative(expected):
         raise ValueError(
             f"{relative(manifest_path)}: status-only packages must use the canonical "
@@ -540,7 +540,7 @@ def validate_workspace_inventory(packages: list[dict[str, Any]]) -> None:
             f"{', '.join(missing_from_metadata)}"
         )
     expected_status_only = {
-        f"{LIBRARY_DIR}/{family}-core" for family in STATUS_ONLY_FAMILIES
+        f"{LIBRARY_DIR}/{family}" for family in STATUS_ONLY_FAMILIES
     }
     missing_status_only = sorted(expected_status_only.difference(declared))
     if missing_status_only:
@@ -654,10 +654,10 @@ def validate_registry(
                 f"{family!r}"
             )
         if family in DEFERRED_FAMILIES:
-            if f"`{family}-core`" not in row["owner"]:
+            if f"`{family}`" not in row["owner"]:
                 raise ValueError(
                     f"{relative(VISION_PATH)}: deferred family {family!r} must name "
-                    f"its future owning crate `{family}-core`"
+                    f"its future owning crate `{family}`"
                 )
             if not row["state"].startswith(STATE_DEFERRED):
                 raise ValueError(
@@ -715,7 +715,7 @@ def validate_registry(
             raise ValueError(
                 f"family {family!r} is recorded as deferred but owns a package"
             )
-        package_dir = ROOT / LIBRARY_DIR / f"{family}-core"
+        package_dir = ROOT / LIBRARY_DIR / f"{family}"
         if package_dir.exists():
             raise ValueError(
                 f"{relative(package_dir)}: deferred families own no package directory"

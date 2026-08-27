@@ -1,6 +1,6 @@
 # Tasks: Agent Definition and Local Runtime
 
-- [x] 1. Create `agent-core` with versioned definition, policy, limit, registry, invocation, event/result, and error contracts.
+- [x] 1. Create `agent` with versioned definition, policy, limit, registry, invocation, event/result, and error contracts.
 - [x] 2. Implement explicit validation for IDs, required fields, references, policy shape, and positive execution limits.
 - [x] 3. Define `DefinitionStore`, `ModelProvider`, `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, and `Sandbox` traits owned by the core.
 - [x] 4. Implement deterministic in-memory registry/store and immutable built-in merge behavior.
@@ -14,4 +14,4 @@
 
 ## Validation matrix
 
-Narrow command: `cargo test -p agent-core -p agent-mcp`. Required: definition/catalog validation, capability limits, denial paths, scope-digest stability, MCP schema/projection. Conditional: proptest for policy scope; loom after shared-state adapters; fuzz ingress. N/A: canonical golden records (Agent has no immutable record codec).
+Narrow command: `cargo test -p agent -p agent-mcp`. Required: definition/catalog validation, capability limits, denial paths, scope-digest stability, MCP schema/projection. Conditional: proptest for policy scope; loom after shared-state adapters; fuzz ingress. N/A: canonical golden records (Agent has no immutable record codec).

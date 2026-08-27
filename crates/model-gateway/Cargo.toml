@@ -1,6 +1,5 @@
 [package]
-name = "policy-core"
-description = "Transport-independent trusted context and capability grant policy contracts."
+name = "model-gateway"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,12 +7,9 @@ rust-version.workspace = true
 repository.workspace = true
 
 [package.metadata.rust-factory]
-family = "policy"
+family = "model-gateway"
 role = "core"
-status = "implemented"
-
-[dependencies]
-sha2.workspace = true
+status = "scaffolded"
 
 [lints]
 workspace = true
