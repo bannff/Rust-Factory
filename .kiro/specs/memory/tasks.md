@@ -16,7 +16,7 @@ Tracked by [#18](https://github.com/bannff/Rust-Factory/issues/18).
 - [x] 12. Final gates on the MCP surface. `meta-architect` found five governing documents asserting the opposite of the code; all corrected.
 - [x] 13. Update the Vision registry row, README, brick standard, adapter portfolio, framework policy, and `policy`'s contract matrix.
 - [x] 14. Recovered combined-tree evidence: focused QA/security/final Rust SME/final architecture gates approved, full `make check` passed, `memory` has 90 all-feature tests and 25 framework-free default tests.
-- [ ] 15. Commit the recovered combined Memory/Observability tree only after its focused recovery gates and the main agent's final successful `make check`; no current full-workspace result is claimed here.
+- [x] 15. Commit the recovered combined Memory/Observability tree after focused recovery gates and a successful full `make check` (`f702dc2`).
 
 ## Deferred, each separately gated
 
