@@ -15,7 +15,7 @@ schema, error-framework, filesystem, or async-runtime dependency.
 | `crates/workflow` | `mcp`, `memory` | Bounded workflow lifecycle for one agent invocation. |
 | `crates/evaluation` | `mcp`, `memory` | Immutable evaluation contracts over terminal workflow evidence. |
 | `crates/project` | `mcp`, `fs` | Blueprint validation, generation planning, and root-confined materialization. |
-| `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. No MCP surface by design — see below. |
+| `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. No MCP surface, by design. |
 | `crates/{model-gateway,memory,sandbox,observability}` | — | Status-only scaffolds for the families the autonomous loop drives next; their provisional ports still live in `agent`. |
 | `crates/mcp-transport` | — | Shared bounded MCP stdio transport. Owns no capability. |
 
@@ -27,14 +27,37 @@ to do, so exposing it to agents would be a privilege-escalation seam whichever
 tools were chosen. Every other operable brick is agent-drivable.
 
 Every package declares `family`, `role`, and `status` in `[package.metadata.rust-factory]`, and the [Vision portfolio registry](.kiro/steering/living-factory-vision.md#brick-portfolio-registry) is the family-level source of truth. Capabilities that are committed but not yet driven by a consumer — workspace governance, identity, knowledge, verification, message bus, cache, graph, notification — are registry rows naming a future crate rather than empty packages, so a new concern always has a designated home without shipping code that does nothing. `make check` enforces registry and metadata agreement in both directions.
-- `.kiro/skills` — shared Rust guidance for all agent roles.
-- `.kiro/specs/rust-factory-foundation` — the first capability-oriented migration plan.
 
-Shared capability contracts are introduced only as narrowly named, transport-independent cores after a demonstrated stable contract has at least two consumers. The extracted core becomes canonical; consumers depend inward on it. Rust Factory intentionally has no generic umbrella core.
+## Repository layout
+
+- `crates/` — libraries, one per capability. No binary targets.
+- `projects/` — deployable binaries, one per composition root. Not yet created.
+- `.kiro/steering` — architecture rules, injected into every agent session.
+- `.kiro/specs/brick-standard` — the contract a new or refactored brick follows.
+- `.kiro/skills` — shared Rust guidance for all agent roles.
+
+## Build
+
+Requires Rust 1.88+ (edition 2024) and Python 3.11+, which the registry
+validator needs for `tomllib`.
+
+```sh
+cargo build --workspace   # framework-free cores only
+make check                # the full gate, across the feature matrix
+```
+
+The workspace produces libraries only. There is nothing to run yet: transport
+binding belongs to a `projects/` composition root, and none exists ([#6]).
+
+[#6]: https://github.com/bannff/Rust-Factory/issues/6
 
 ## Brick standard
 
-New or refactored bricks follow the Rust-SME-approved [Canonical Brick Standard](.kiro/specs/brick-standard/requirements.md). A brick is exactly one crate, named for its capability. Adapters are feature-gated modules inside it — `mcp`, `memory`, `fs` — and a binary under `projects/` owns runtime, transport, configuration, trusted context, Policy composition, concrete adapter injection, and shutdown. Boundary DTOs use `serde` and `schemars`; typed constructors and core `validate_*` rules establish domain validity. The standard also tracks the behavior-preserving migration that removes stdio lifecycle ownership from existing MCP libraries.
+New or refactored bricks follow the [Canonical Brick Standard](.kiro/specs/brick-standard/requirements.md). A brick is exactly one crate, named for its capability. Adapters are feature-gated modules inside it — `mcp`, `memory`, `fs` — and a binary under `projects/` owns runtime, transport, configuration, trusted context, Policy composition, concrete adapter injection, and shutdown. Boundary DTOs use `serde` and `schemars`; typed constructors and core `validate_*` rules establish domain validity. No library owns process lifecycle: `serve_stdio` has been removed from every brick.
+
+A shared contract is extracted only after a demonstrated stable need has at
+least two consumers; the extracted crate becomes canonical and consumers depend
+inward on it. There is no generic umbrella core.
 
 ## Quality gate
 

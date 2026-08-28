@@ -32,8 +32,6 @@ MCP adapters are libraries. A thin binary composition root owns process topology
 
 A consuming core calls another capability through the consumed capability's typed port. Local and edge composition inject direct Rust implementations. A remote client is an opt-in adapter that implements that same consumed port only after a dedicated process-boundary specification proves trusted context is independently derived at the receiver and defines authorization, request/result ceilings, idempotency, deadline/cancellation propagation, evidence, and honest recovery guarantees. MCP client calls are never hardcoded in core orchestration.
 
-A linked edge binary is a local composition topology, not a mesh adapter. It inherits the guarantees of its selected local adapters and makes no mesh, durable recovery, cross-process cancellation, or distributed Policy propagation claim without separately specified adapters.
-
 ## Three planes
 
 1. **Authoring plane — MCP.** Agents discover bricks and use bounded tools to create projects, configure agents, retrieve steering/skills/knowledge, operate workflows, and inspect evaluation evidence.
@@ -80,11 +78,11 @@ separate package, because a brick cannot contain them: a deployable binary
 (`server`, under `projects/`), a peer-coordination adapter (`mesh`), and shared
 test fixtures (`test-support`).
 
-A composition root is named for the deployable it produces, not for a capability family: it owns no capability and may host several brick MCP surfaces. The per-family `-server` shape recorded in the registry's mature-shape column is the single-capability case of that same rule.
+A composition root is named for the deployable it produces, not for a capability family: it owns no capability and may host several brick MCP surfaces.
 
 Not every brick needs every adapter. Start with the smallest set that proves a real capability. Avoid bespoke abstractions where the standard library or a mature framework already provides the required primitive.
 
-The Rust-SME-approved [Canonical Brick Standard](../specs/brick-standard/requirements.md) is the mandatory scaffold contract for new or refactored portfolio entries. It defines role eligibility, crate/test layout, inward dependency direction, strict boundary DTO conversion, explicit domain validation, policy-before-effect behavior, safe bounded egress, and binary-owned process lifecycle. It is intentionally Rust-native: `serde` and `schemars` describe bounded transport/configuration DTOs; validated Rust types and core rules own domain validity. The shared transport migration is complete and no library owns process lifecycle: `serve_stdio` has been removed from every brick, so transport binding belongs solely to a `projects/` binary. No such binary exists yet, so the workspace currently produces libraries only.
+The [Canonical Brick Standard](../specs/brick-standard/requirements.md) is the mandatory scaffold contract for new or refactored portfolio entries. It defines role eligibility, crate/test layout, inward dependency direction, strict boundary DTO conversion, explicit domain validation, policy-before-effect behavior, safe bounded egress, and binary-owned process lifecycle. The shared transport migration is complete and no library owns process lifecycle: `serve_stdio` has been removed from every brick, so transport binding belongs solely to a `projects/` binary. No such binary exists yet, so the workspace currently produces libraries only.
 
 ## Brick portfolio registry
 
@@ -92,20 +90,11 @@ GitHub [Issue #11](https://github.com/bannff/Rust-Factory/issues/11) tracks the 
 
 **A registry row is the parking space, not an empty crate.** Every capability family has a named owning crate here before any code is written, so a new concern always has an unambiguous home and never accumulates inside an unrelated brick. A family receives an actual package only when the flagship autonomous loop—or another demonstrated consumer—drives it. A row whose state is `Deferred` names its future crate and has no package on disk; creating that package early would freeze a contract that no consumer has yet shaped.
 
-A **status-only** package is the narrow intermediate step for a family that is committed but not yet designed:
+A family that is committed but not yet designed may use the status-only package tree defined in brick-standard requirement 10.
 
-```text
-crates/<family>/
-  Cargo.toml                         # [package.metadata.rust-factory]
-  src/{lib.rs,model.rs,validation.rs,error.rs,port.rs,service.rs}
-  tests/public_contract.rs
-```
+Every package in the workspace declares `family`, `role`, and `status` in `[package.metadata.rust-factory]`. The closed roles are `brick` (a capability crate with its feature-gated adapter modules), `core` (a status-only family with no behavior yet), `infrastructure` (shared, owns no capability), and the three a brick cannot contain: `server`, `mesh`, and `test-support`. The closed statuses are `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`.
 
-It has `family`, `role = "core"`, and `status = "scaffolded"` in Cargo metadata; contains only compile-safe status documentation/comments; and has no non-stdlib dependencies, public semantic API, or guarantee claim. When a family becomes real, its existing paths gain the typed model, validation, error, port, service, and contract-test contents—agents never need to guess where a concern belongs.
-
-Every package in the workspace declares `family`, `role`, and `status` in `[package.metadata.rust-factory]`. The closed roles are `brick` (a capability crate with its feature-gated adapter modules), `core` (a status-only family with no behavior yet), `infrastructure` (shared, owns no capability), and the three a brick cannot contain: `server`, `mesh`, and `test-support`. The closed statuses are `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Of the five, only `scaffolded` carries an enforced structural obligation; the rest are declarations of intent and are not guarantees.
-
-`scripts/validate_brick_registry.py` enforces this registry through `make check` in **both** directions: no package may declare a family absent from this table, and no capability family in this table may go undeclared. The validator holds its own declared family list deliberately — it is the independent second statement that this table is checked against, so collapsing the two into one source would make the cross-check tautological and let a bad table edit self-authorize. Adding or retiring a family means editing both, and they must agree.
+`scripts/validate_brick_registry.py` enforces this registry through `make check` in **both** directions: no package may declare a family absent from this table, and no capability family in this table may go undeclared. Adding or retiring a family means editing this table and `scripts/validate_brick_registry.py` together; `make check` fails if they disagree.
 
 | Family | Taxonomy | Owning crate | Mature shape when justified | Current state |
 |---|---|---|---|---|
@@ -118,14 +107,14 @@ Every package in the workspace declares `family`, `role`, and `status` in `[pack
 | Memory | Capability | `memory` | `memory` with local/durable/index adapter and `mcp` modules | Scaffolded; provisional `MemoryStore` port stays in `agent` until extraction is separately gated |
 | Sandbox | Capability | `sandbox` | `sandbox` with deny/local/confined adapter modules covering isolated tool and test execution with captured evidence, and `mcp` | Scaffolded; provisional `Sandbox` port, `DenySandbox`, and the `ToolRegistry` port stay in `agent` |
 | Observability / audit | Capability | `observability` | `observability` with logging/tracing/metrics/audit adapter and `mcp` modules | Scaffolded; no port yet — `agent::InvocationEvent` is returned in band, not published |
-| Workspace governance | Capability | `workspace-governance` | `workspace-governance` with Cargo/governance adapter and `mcp` modules | Deferred; the `make check` validator covers this ground for now |
-| Identity / authentication | Capability | `identity` | `identity` with trusted-host/provider adapter and `mcp` modules | Deferred; process-boundary Policy (#5) is a prerequisite and local single-process operation needs no principal authentication |
-| Knowledge | Capability | `knowledge` | `knowledge` with local/index/vector/graph adapter and `mcp` modules | Deferred; the `KnowledgeStore` port and `StaticKnowledgeStore` remain owned by `agent` |
-| Verification | Capability | `verification` | `verification` with attestation/provenance/reproducibility adapter and `mcp` modules | Deferred; a live-fact check is not a capability — Evaluation owns acceptance and Observability owns evidence. Justified only by signed attestation, provenance chains, or reproducible-artifact proof across multiple consumers |
-| Message bus / events | Capability | `message-bus` | `message-bus` with local/durable/broker adapter and `mcp` modules | Deferred; no `MessageBus` port exists and a separate semantic spec is required |
-| Cache | Capability | `cache` | `cache` with local/Redis-like adapter and `mcp` modules | Deferred; separate semantic spec required. Distinct from storage: a cache may lose everything at restart without being wrong |
-| Graph / provenance | Capability | `graph` | `graph` with local/database adapter and `mcp` modules | Deferred; separate semantic spec required |
-| Notification | Capability | `notification` | `notification` with local/provider adapter and `mcp` modules | Deferred; separate semantic spec required |
+| Workspace governance | Capability | `workspace-governance` | — | Deferred |
+| Identity / authentication | Capability | `identity` | — | Deferred |
+| Knowledge | Capability | `knowledge` | — | Deferred |
+| Verification | Capability | `verification` | — | Deferred |
+| Message bus / events | Capability | `message-bus` | — | Deferred |
+| Cache | Capability | `cache` | — | Deferred |
+| Graph / provenance | Capability | `graph` | — | Deferred |
+| Notification | Capability | `notification` | — | Deferred |
 | Configuration | Adapter infrastructure | No capability crate; server config modules | bounded config-source adapters owned by composition binaries | Agent server config specified |
 | Storage | Adapter infrastructure | No generic storage crate | capability-owned persistence ports and adapters | Local adapters exist; generic facade prohibited |
 | HTTP / integrations | Adapter infrastructure | No capability crate | consumed-port remote/integration adapters | Deferred pending #5 |
@@ -135,18 +124,9 @@ Every package in the workspace declares `family`, `role`, and `status` in `[pack
 | Data / learning | Optional domain packs | Portfolio registry only until a concrete product contract exists | dataset/ML/learning capability families | Deferred |
 | Security, payments, blockchain, games, UI, OpenArcade | Optional domain packs | Portfolio registry only | product-specific composition from generic seams | Excluded from generic core contracts |
 
-An adapter module is added only after its own eligibility is met: `memory` after a concrete stateful core port and truthful process-local semantics; `fs` or a vendor module to implement an existing port; `mcp` after a bounded operational surface. Only three roles justify a separate package: `server` after topology and configuration are specified, `mesh` after a dedicated process-boundary specification, and `test-support` after two consumers need shared fixtures. Existing packages migrate behavior-preservingly to this metadata/layout standard. Project Blueprint V1 remains a single-package generator and SHALL NOT stamp family scaffolds; a separately approved successor will do so.
+Adapter-module and separate-package eligibility, the source-level guarantee, and why `policy` has no MCP surface are all defined in the [Canonical Brick Standard](../specs/brick-standard/requirements.md) requirement 5. In-process brick-to-brick calls use the consumed port trait directly and never round-trip through MCP.
 
-Libraries live under `crates/` and never declare a binary target. Deployable binaries live under `projects/<name>/`, carry `role = "server"`, and are the only packages that own a process: Tokio startup, transport binding, configuration, host-derived trusted context, Policy resolver construction, concrete adapter injection, and orderly shutdown. A project composes only the bricks it needs—there is no aggregate binary that must host every capability.
-
-**A brick is one crate.** Its agent-facing MCP surface and its local adapters are feature-gated modules inside it — `mcp`, `memory`, `fs` — so one capability is one thing to find, name, and compose. A mesh node compiles in the bricks it needs and gets each one's tool namespace, schema, and authorization scope with it. No feature is on by default, so a brick's default build resolves no transport, schema, error-framework, filesystem, or async-runtime dependency. It is not dependency-free: a core may still use a focused library such as `sha2` or `serde_json`.
-
-The cost is honest and bounded: Cargo unifies features per build graph, so the workspace asserts framework-free **source** (each brick's default build resolves no adapter dependency, checked by `make isolation-check`) but does **not** claim framework-free **artifacts** — a binary composing several bricks over MCP links one framework-carrying build of each. What the crate boundary used to enforce structurally is now a path rule in the registry validator: adapter dependencies appear only under their own feature-gated module, and no feature-conditional attribute lands on a domain type.
-
-In-process brick-to-brick calls use the consumed port trait directly and never round-trip through MCP. MCP is the door agents come through, not the wiring between rooms.
-
-One brick is deliberately not agent-operable. `policy` decides what an agent is permitted to do, so exposing it through MCP would be a privilege-escalation seam regardless of which tools were chosen. It stays a typed Rust contract.
-
+Why the deferred families are deferred: `identity` needs process-boundary Policy (#5) first, and local single-process operation authenticates no principal. `knowledge` keeps `KnowledgeStore` in `agent`. `workspace-governance` is covered by the `make check` validator for now. `verification` needs signed attestation or provenance chains proven across two consumers — a live-fact check is not a capability. `message-bus` has no port and `cache`, `graph`, and `notification` each need their own semantic spec. `cache` is distinct from storage: a cache may lose everything at restart without being wrong.
 ## Delivery order
 
 1. Build an MCP-exposed project brick that turns a declarative blueprint into a validated Rust workspace.
