@@ -16,11 +16,17 @@ schema, error-framework, filesystem, or async-runtime dependency.
 | `crates/evaluation` | `mcp`, `memory` | Immutable evaluation contracts over terminal workflow evidence. |
 | `crates/project` | `mcp`, `fs` | Blueprint validation, generation planning, and root-confined materialization. |
 | `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. No MCP surface, by design. |
-| `crates/{model-gateway,memory,sandbox,observability}` | — | Status-only scaffolds for the families the autonomous loop drives next; their provisional ports still live in `agent`. |
+| `crates/memory` | `local`, `agentic`, `settings` | Tenant-scoped agent memory behind one framework-agnostic port. Two selectable backends; no durable adapter and no MCP surface yet. |
+| `crates/{model-gateway,sandbox,observability}` | — | Status-only scaffolds for the families the autonomous loop drives next; their provisional ports still live in `agent`. |
 | `crates/mcp-transport` | — | Shared bounded MCP stdio transport. Owns no capability. |
 
-A `memory` or `fs` module is a deterministic process-local adapter: no
-persistence, recovery, lease, or cross-process guarantee.
+A `memory`, `local`, or `fs` module is a deterministic process-local adapter: no
+persistence, recovery, lease, or cross-process guarantee. A vendor module is named
+for the crate it confines — `agentic` holds `agentic-memory` and nothing else
+names it — and a `settings` module holds the shape of a project's configuration,
+never its source and never the selection-to-constructor `match`, which belong to a
+composition binary. An adapter is feature-gated even when it adds no dependency,
+so the rule that a core module names no adapter keeps applying to it.
 
 `policy` has no MCP surface deliberately. It decides what an agent is permitted
 to do, so exposing it to agents would be a privilege-escalation seam whichever
@@ -53,7 +59,7 @@ binding belongs to a `projects/` composition root, and none exists ([#6]).
 
 ## Brick standard
 
-New or refactored bricks follow the [Canonical Brick Standard](.kiro/specs/brick-standard/requirements.md). A brick is exactly one crate, named for its capability. Adapters are feature-gated modules inside it — `mcp`, `memory`, `fs` — and a binary under `projects/` owns runtime, transport, configuration, trusted context, Policy composition, concrete adapter injection, and shutdown. Boundary DTOs use `serde` and `schemars`; typed constructors and core `validate_*` rules establish domain validity. No library owns process lifecycle: `serve_stdio` has been removed from every brick.
+New or refactored bricks follow the [Canonical Brick Standard](.kiro/specs/brick-standard/requirements.md). A brick is exactly one crate, named for its capability. Adapters are feature-gated modules inside it — `mcp`, `memory`, `local`, `fs`, a vendor module, `settings` — and a binary under `projects/` owns runtime, transport, configuration, trusted context, Policy composition, concrete adapter injection, and shutdown. Boundary DTOs use `serde` and `schemars`; typed constructors and core `validate_*` rules establish domain validity. No library owns process lifecycle: `serve_stdio` has been removed from every brick.
 
 A shared contract is extracted only after a demonstrated stable need has at
 least two consumers; the extracted crate becomes canonical and consumers depend

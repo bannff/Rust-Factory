@@ -22,6 +22,7 @@ authors = ["Rust Factory contributors"]
 repository = "https://example.invalid/rust-factory"
 
 [workspace.dependencies]
+agentic-memory = { version = "=0.4.2", default-features = false }
 anyhow = "=1.0.100"
 cap-std = "=4.0.3"
 rmcp = { version = "=3.1.4", features = ["macros", "server", "transport-io"] }

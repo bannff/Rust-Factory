@@ -7,6 +7,8 @@ No framework belongs in every brick. Cores use typed Rust models, explicit valid
 | Semantic canonical input | serde_json exception | permitted in core only for specified canonical semantic input; no serde boundary types in public API |
 | Serialization/ingress | serde, serde_json | closed adapter DTOs (`deny_unknown_fields` unless an extension map is specified), private conversion, and explicit raw/semantic bounds |
 | External schemas/MCP | schemars, rmcp | discovery/shape documentation at MCP adapters only; schema success is not domain validation or authorization |
+| Declarative selection | serde, schemars | `settings` module only; owns configuration shape, never the configuration source or the selection-to-constructor `match` |
+| Agent memory backend | agentic-memory `=0.4.2` | `memory`'s `agentic` module only, `default-features = false`; no vendor type in a public signature. See [memory](../memory/requirements.md) section 7 |
 | Filesystem confinement | cap-std | filesystem adapter only |
 | Stable library errors | thiserror candidate | only if repeated error boilerplate justifies it |
 | Operational context | anyhow | binaries/adapters only, never public core errors |

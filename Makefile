@@ -5,7 +5,7 @@
 # cores. The -features targets below are what cover the adapter code; without
 # them roughly half the workspace would go uncompiled, unlinted, and untested.
 
-BRICKS := agent evaluation policy project workflow
+BRICKS := agent evaluation memory policy project workflow
 
 fmt:
 	cargo fmt --all
@@ -23,6 +23,10 @@ lint-features:
 	cargo clippy -p agent --features mcp --all-targets -- -D warnings
 	cargo clippy -p evaluation --features mcp --all-targets -- -D warnings
 	cargo clippy -p evaluation --features memory --all-targets -- -D warnings
+	cargo clippy -p memory --features local --all-targets -- -D warnings
+	cargo clippy -p memory --features agentic --all-targets -- -D warnings
+	cargo clippy -p memory --features settings --all-targets -- -D warnings
+	cargo clippy -p memory --features agentic,local --all-targets -- -D warnings
 	cargo clippy -p policy --features memory --all-targets -- -D warnings
 	cargo clippy -p project --features fs --all-targets -- -D warnings
 	cargo clippy -p project --features mcp --all-targets -- -D warnings
@@ -36,6 +40,10 @@ test:
 test-features:
 	cargo test -p agent --features mcp
 	cargo test -p evaluation --features mcp,memory
+	cargo test -p memory --features local
+	cargo test -p memory --features settings
+	cargo test -p memory --features agentic,local
+	cargo test -p memory --features agentic,local,settings
 	cargo test -p policy --features memory
 	cargo test -p project --features mcp,fs
 	cargo test -p project --features mcp
@@ -54,7 +62,7 @@ test-features:
 # graph in isolation, so it says nothing about artifacts: Cargo unifies features
 # per build graph, so a binary composing several bricks with `mcp` enabled links
 # one framework-carrying build of each.
-ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio
+ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory
 
 isolation-check:
 	@for dep in $(ADAPTER_DEPS); do \

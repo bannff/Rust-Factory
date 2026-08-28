@@ -62,7 +62,7 @@ DEFERRED_FAMILIES = {
 }
 
 # Active families whose only package is still a status-only core tree.
-STATUS_ONLY_FAMILIES = frozenset({"model-gateway", "memory", "sandbox", "observability"})
+STATUS_ONLY_FAMILIES = frozenset({"model-gateway", "sandbox", "observability"})
 
 # Registry rows carrying this taxonomy describe a capability family. Every
 # other taxonomy is adapter infrastructure, a composition base, or an optional
@@ -106,23 +106,41 @@ VALID_ROLES = {
     "test-support",
 }
 
-# An adapter dependency may only be named under its own feature-gated module.
-# Consolidating each brick into one crate removed the crate boundary that used
-# to make "the core never touches rmcp" mechanically true, so this path rule
-# replaces it. serde and serde_json are absent deliberately: workflow uses
-# serde_json in its core for canonical JSON.
+# An adapter dependency may only be named under one of its permitted
+# feature-gated modules. Consolidating each brick into one crate removed the
+# crate boundary that used to make "the core never touches rmcp" mechanically
+# true, so this path rule replaces it. serde and serde_json are absent
+# deliberately: workflow uses serde_json in its core for canonical JSON.
+#
+# A dependency maps to a *set* of modules because more than one adapter can have
+# a legitimate claim on it: schemars describes an MCP tool schema and equally
+# describes a declarative configuration schema. Collapsing that to a single
+# module would force one of the two to be misnamed.
 ADAPTER_MODULES = {
-    "rmcp": "mcp",
-    "mcp_transport": "mcp",
-    "schemars": "mcp",
-    "anyhow": "mcp",
-    "cap_std": "fs",
+    "rmcp": frozenset({"mcp"}),
+    "mcp_transport": frozenset({"mcp"}),
+    "schemars": frozenset({"mcp", "settings"}),
+    "anyhow": frozenset({"mcp"}),
+    "cap_std": frozenset({"fs"}),
+    "agentic_memory": frozenset({"agentic"}),
 }
 
-# Every module name a brick may feature gate. This is a superset of
-# ADAPTER_MODULES' values because an adapter need not pull a dependency at all:
-# a `memory` adapter is deterministic and uses only the standard library.
-ADAPTER_MODULE_NAMES = frozenset({"mcp", "memory", "fs"})
+# Every module name a brick may feature gate. A superset of ADAPTER_MODULES'
+# values because an adapter need not pull a dependency at all: a `memory` adapter
+# is deterministic and uses only the standard library.
+#
+# `settings` is here because declarative backend selection needs serde and
+# schemars, which are framework dependencies like any other and must not reach the
+# default build. It is not named `config` because `src/config.rs` is already
+# assigned to a `role = "server"` package by the brick standard, and a path must
+# predict its contents.
+#
+# `local` is a std-only adapter with no dependency at all. It is still gated and
+# still listed here, because otherwise the validator would classify it as a core
+# module and the "a core module names no adapter" rule would stop applying to it.
+ADAPTER_MODULE_NAMES = frozenset(
+    {"mcp", "memory", "fs", "agentic", "local", "settings"}
+)
 VALID_STATUSES = {
     "scaffolded",
     "specified",
@@ -397,11 +415,12 @@ def validate_adapter_isolation(package_dir: Path) -> None:
         if module is None:
             continue
         text = read_bounded(source)
-        for crate, required_module in ADAPTER_MODULES.items():
-            if adapter_references(text, crate) and module != required_module:
+        for crate, permitted_modules in ADAPTER_MODULES.items():
+            if adapter_references(text, crate) and module not in permitted_modules:
+                allowed = " or ".join(repr(name) for name in sorted(permitted_modules))
                 raise ValueError(
                     f"{relative(source)}: names the adapter dependency {crate!r}, "
-                    f"which may appear only under the {required_module!r} module. "
+                    f"which may appear only under the {allowed} module. "
                     "Adapter code belongs behind its own feature gate so the default "
                     "build stays framework-free"
                 )

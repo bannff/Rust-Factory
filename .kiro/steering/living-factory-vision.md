@@ -104,7 +104,7 @@ Every package in the workspace declares `family`, `role`, and `status` in `[pack
 | Workflow | Capability | `workflow` | `workflow` with `memory`, durable adapter, and `mcp` modules | Implemented; durable adapter pending |
 | Evaluation | Capability | `evaluation` | `evaluation` with `memory`, evaluator adapter, and `mcp` modules | Implemented; evaluator portfolio pending |
 | Model gateway | Capability | `model-gateway` | `model-gateway` with provider adapter and `mcp` modules | Scaffolded; provisional `ModelProvider` port stays in `agent` until extraction is separately gated |
-| Memory | Capability | `memory` | `memory` with local/durable/index adapter and `mcp` modules | Scaffolded; provisional `MemoryStore` port stays in `agent` until extraction is separately gated |
+| Memory | Capability | `memory` | `memory` with local/vendor/durable/index adapter, `settings`, and `mcp` modules | Implemented; `local` and `agentic` adapters with `settings` selection. No durable adapter and no `mcp` module yet; `agent`'s provisional `MemoryStore` port still awaits a separately gated migration |
 | Sandbox | Capability | `sandbox` | `sandbox` with deny/local/confined adapter modules covering isolated tool and test execution with captured evidence, and `mcp` | Scaffolded; provisional `Sandbox` port, `DenySandbox`, and the `ToolRegistry` port stay in `agent` |
 | Observability / audit | Capability | `observability` | `observability` with logging/tracing/metrics/audit adapter and `mcp` modules | Scaffolded; no port yet — `agent::InvocationEvent` is returned in band, not published |
 | Workspace governance | Capability | `workspace-governance` | — | Deferred |
