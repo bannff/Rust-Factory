@@ -1,7 +1,9 @@
+#![allow(unknown_lints)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::unused_self)]
+#![allow(clippy::unused_async_trait_impl)]
 
 use anyhow::{Context, Result};
 use policy::{

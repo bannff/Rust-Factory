@@ -3,9 +3,11 @@
 //! Enabled by the `mcp` feature. Owns transport DTOs, generated schemas, the
 //! policy gate, and safe response projection — never process lifecycle.
 
+#![allow(unknown_lints)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::unused_async_trait_impl)]
 
 use crate::{
     AgentInvoker, AgentStep, InvocationPolicy, LogicalId, MAX_JSON_INPUT_BYTES, MAX_RUN_KEY_BYTES,

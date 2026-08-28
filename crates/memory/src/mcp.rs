@@ -60,10 +60,13 @@
 //! does entirely synchronous work and both current adapters take a `Mutex` while
 //! serving a request. A composition root must not assume these calls yield.
 
+#![allow(unknown_lints)]
+#![allow(clippy::manual_noop_waker)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::unused_self)]
+#![allow(clippy::unused_async_trait_impl)]
 
 use anyhow::{Context, Result};
 use policy::{
@@ -1485,13 +1488,13 @@ mod tests {
             vec!["fact", "pref"],
             "the stamped clock value falls inside this window"
         );
-        assert!(
+        assert_eq!(
             keys(SearchInput {
                 limit: 1,
                 ..search_input(1)
             })
-            .len()
-                == 1
+            .len(),
+            1
         );
 
         // The search projection is as safe as the recall projection.
