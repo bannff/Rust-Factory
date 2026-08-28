@@ -23,6 +23,10 @@ lint-features:
 	cargo clippy -p agent --features mcp --all-targets -- -D warnings
 	cargo clippy -p evaluation --features mcp --all-targets -- -D warnings
 	cargo clippy -p evaluation --features memory --all-targets -- -D warnings
+	cargo clippy -p evaluation --features local --all-targets -- -D warnings
+	cargo clippy -p evaluation --features serdes-ai-evals --all-targets -- -D warnings
+	cargo clippy -p evaluation --features settings --all-targets -- -D warnings
+	cargo clippy -p evaluation --features mcp,memory,local,serdes-ai-evals,settings --all-targets -- -D warnings
 	cargo clippy -p memory --features local --all-targets -- -D warnings
 	cargo clippy -p memory --features agentic --all-targets -- -D warnings
 	cargo clippy -p memory --features settings --all-targets -- -D warnings
@@ -45,6 +49,10 @@ test:
 test-features:
 	cargo test -p agent --features mcp
 	cargo test -p evaluation --features mcp,memory
+	cargo test -p evaluation --features local
+	cargo test -p evaluation --features serdes-ai-evals
+	cargo test -p evaluation --features settings
+	cargo test -p evaluation --features mcp,memory,local,serdes-ai-evals,settings
 	cargo test -p memory --features local
 	cargo test -p memory --features settings
 	cargo test -p memory --features agentic,local
@@ -74,7 +82,7 @@ test-features:
 # graph in isolation, so it says nothing about artifacts: Cargo unifies features
 # per build graph, so a binary composing several bricks with `mcp` enabled links
 # one framework-carrying build of each.
-ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory opentelemetry
+ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory opentelemetry serdes-ai-evals
 
 isolation-check:
 	@for dep in $(ADAPTER_DEPS); do \

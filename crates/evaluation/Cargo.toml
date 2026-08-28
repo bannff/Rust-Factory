@@ -15,8 +15,11 @@ status = "implemented"
 # No feature is enabled by default: the default build is the framework-free
 # capability, and every adapter is opt-in.
 [features]
+local = []
 mcp = ["dep:anyhow", "dep:policy", "dep:rmcp", "dep:schemars", "dep:serde", "dep:serde_json"]
 memory = []
+serdes-ai-evals = ["dep:serdes-ai-evals"]
+settings = ["dep:schemars", "dep:serde"]
 
 [dependencies]
 sha2.workspace = true
@@ -27,6 +30,10 @@ rmcp = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+serdes-ai-evals = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

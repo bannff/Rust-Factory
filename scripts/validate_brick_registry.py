@@ -124,6 +124,7 @@ ADAPTER_MODULES = {
     "cap_std": frozenset({"fs"}),
     "agentic_memory": frozenset({"agentic"}),
     "opentelemetry": frozenset({"opentelemetry"}),
+    "serdes_ai_evals": frozenset({"serdes_ai_evals"}),
 }
 
 # Every module name a brick may feature gate. A superset of ADAPTER_MODULES'
@@ -140,7 +141,16 @@ ADAPTER_MODULES = {
 # still listed here, because otherwise the validator would classify it as a core
 # module and the "a core module names no adapter" rule would stop applying to it.
 ADAPTER_MODULE_NAMES = frozenset(
-    {"mcp", "memory", "fs", "agentic", "local", "settings", "opentelemetry"}
+    {
+        "mcp",
+        "memory",
+        "fs",
+        "agentic",
+        "local",
+        "settings",
+        "opentelemetry",
+        "serdes_ai_evals",
+    }
 )
 VALID_STATUSES = {
     "scaffolded",
@@ -388,18 +398,59 @@ def module_of(source: Path, package_dir: Path) -> str | None:
     return parts[1]
 
 
+def rust_use_trees(text: str) -> list[str]:
+    """Returns bounded Rust use trees without their visibility or `use` prefix."""
+    return re.findall(
+        r"^\s*(?:(?:pub(?:\s*\([^)]*\))?)\s+)?use\s+([^;]+);",
+        text,
+        re.MULTILINE,
+    )
+
+
 def adapter_references(text: str, crate: str) -> bool:
     """Detects a reference to an adapter crate, including under an alias.
 
-    A path rule that matched only ``crate::`` would be evaded by
-    ``use rmcp as framework;`` followed by ``framework::Type``, so the import
-    itself is matched too.
+    A path rule that matched only ``crate::`` would be evaded by imports such as
+    ``use rmcp as framework;`` or ``use {rmcp as framework};``, so every bounded
+    Rust use tree is inspected for the crate identifier as well.
     """
     escaped = re.escape(crate)
     return bool(
         re.search(rf"\b{escaped}\s*::", text)
-        or re.search(rf"^\s*(?:pub\s+)?use\s+(?:::)?{escaped}\b", text, re.MULTILINE)
+        or any(
+            re.search(rf"\b{escaped}\b", tree) for tree in rust_use_trees(text)
+        )
         or re.search(rf"\bextern\s+crate\s+{escaped}\b", text)
+    )
+
+
+def aliases_crate_root(text: str) -> bool:
+    """Detects valid imports that rename the crate root in a core module."""
+    for tree in rust_use_trees(text):
+        if re.search(r"\bcrate\s+as\s+\w+", tree):
+            return True
+        if re.search(r"\bcrate\b", tree) and re.search(
+            r"\bself\s+as\s+\w+", tree
+        ):
+            return True
+    return bool(
+        re.search(
+            r"^\s*extern\s+crate\s+self\s+as\s+\w+\s*;",
+            text,
+            re.MULTILINE,
+        )
+    )
+
+
+def core_references_adapter(text: str, adapter_module: str) -> bool:
+    """Detects direct and grouped crate-root paths into an adapter module."""
+    escaped = re.escape(adapter_module)
+    if re.search(rf"\bcrate\s*::\s*{escaped}\b", text):
+        return True
+    return any(
+        re.match(r"^\s*crate\s*::\s*\{", tree)
+        and re.search(rf"\b{escaped}\b", tree)
+        for tree in rust_use_trees(text)
     )
 
 
@@ -427,8 +478,14 @@ def validate_adapter_isolation(package_dir: Path) -> None:
                 )
         if module in adapter_modules:
             continue
+        if aliases_crate_root(text):
+            raise ValueError(
+                f"{relative(source)}: aliases the crate root from a core module. "
+                "Core code must use explicit crate paths so adapter reachability "
+                "remains enforceable"
+            )
         for adapter_module in sorted(adapter_modules):
-            if re.search(rf"\bcrate\s*::\s*{re.escape(adapter_module)}\s*::", text):
+            if core_references_adapter(text, adapter_module):
                 raise ValueError(
                     f"{relative(source)}: reaches into the {adapter_module!r} adapter "
                     "module. A core module must not consume a boundary type; the "
@@ -451,13 +508,14 @@ def validate_feature_table(manifest_path: Path, manifest: dict[str, Any]) -> Non
         )
 
 
-def attribute_bodies(text: str, name: str) -> list[str]:
-    """Returns the argument text of each ``#[name(...)]`` attribute.
+def attribute_occurrences(text: str, name: str) -> list[tuple[str, int]]:
+    """Returns each attribute's argument body and end offset.
 
     Brackets are balanced rather than matched by regex so a nested predicate such
     as ``cfg_attr(all(feature = "mcp"), derive(Serialize))`` is captured whole.
+    The end offset ties an attribute to the item immediately following it.
     """
-    bodies: list[str] = []
+    occurrences: list[tuple[str, int]] = []
     for match in re.finditer(rf"#\s*!?\s*\[\s*{re.escape(name)}\s*\(", text):
         depth = 1
         index = match.end()
@@ -467,8 +525,15 @@ def attribute_bodies(text: str, name: str) -> list[str]:
             elif text[index] == ")":
                 depth -= 1
             index += 1
-        bodies.append(text[match.end() : index - 1])
-    return bodies
+        closing = re.match(r"\s*\]", text[index:])
+        end = index + closing.end() if closing is not None else index
+        occurrences.append((text[match.end() : index - 1], end))
+    return occurrences
+
+
+def attribute_bodies(text: str, name: str) -> list[str]:
+    """Returns the argument body of each matching attribute."""
+    return [body for body, _ in attribute_occurrences(text, name)]
 
 
 def validate_conditional_derives(package_dir: Path) -> None:
@@ -490,14 +555,18 @@ def validate_conditional_derives(package_dir: Path) -> None:
                 )
         # A feature-gated item in a core module is the same hazard by another
         # route. Only the adapter module declarations may be feature gated.
-        for body in attribute_bodies(text, "cfg"):
+        for body, attribute_end in attribute_occurrences(text, "cfg"):
             if not re.search(r"\bfeature\s*=", body):
                 continue
-            gated = [name for name in adapter_modules if f'"{name}"' in body]
-            if len(gated) != 1 or not re.search(
-                rf"#\s*\[\s*cfg\s*\([^)]*\bfeature\s*=\s*\"{gated[0]}\"[^)]*\)\s*\]\s*"
-                rf"(?:pub\s+)?mod\s+{gated[0]}\s*;",
-                text,
+            gated = [
+                (feature, feature.replace("-", "_"))
+                for feature in re.findall(r'\bfeature\s*=\s*"([^"]+)"', body)
+                if feature.replace("-", "_") in adapter_modules
+            ]
+            following_item = text[attribute_end:]
+            if len(gated) != 1 or not re.match(
+                rf"\s*(?:pub\s+)?mod\s+{re.escape(gated[0][1])}\s*;",
+                following_item,
             ):
                 raise ValueError(
                     f"{relative(source)}: feature-gates an item outside an adapter "

@@ -1,33 +1,48 @@
 # Requirements: Evaluation
 
-Evaluation independently assesses immutable terminal Workflow evidence. It SHALL not invoke Agents, mutate Workflow runs, retry execution, or choose lifecycle transitions.
+Evaluation independently assesses immutable terminal Workflow evidence. It SHALL not invoke Agents, mutate Workflow runs, retry execution, choose lifecycle transitions, or own process/runtime lifecycle.
 
-1. `evaluation` SHALL own versioned criteria, evidence references, verdicts, findings, immutable result records, and typed errors.
-2. Evaluation SHALL resolve a terminal Workflow evidence snapshot through an injected read-only `WorkflowEvidenceReader` port and fail closed when evidence is missing, malformed, non-terminal, or cross-tenant.
-3. The first evaluator SHALL be deterministic: exact expected output and bounded predicates over normalized terminal evidence.
-4. Every result SHALL include evaluator ID/version, criterion/input digest, evidence reference, verdict (`pass`, `fail`, or `error`), findings, and immutable content hash.
-5. `EvaluationStore` SHALL create-or-match immutable content-addressed records; conflicting identity/content is an error.
-6. `evaluation::mcp` SHALL expose `evaluation_validate`, `evaluation_evaluate_run`, and `evaluation_get_result`; it derives trusted tenant/principal context at ingress and returns safe public projections only.
-7. Evaluation results may be linked by later Workflow projections but SHALL never change Workflow terminal status.
+## Completed V1 capability
 
-Non-goals: model-judged evaluation, UI/dashboard suites, arbitrary scorer callbacks, experiment runners, direct provider configuration, workflow control, or mesh replication.
+1. `evaluation` SHALL own versioned criteria, evidence snapshots and references, verdicts, findings, immutable result records, canonical encodings, digests, and typed errors.
+2. Evaluation SHALL consume a terminal snapshot through the injected, tenant-scoped, read-only `WorkflowEvidenceReader` port. The brick SHALL NOT depend on `workflow` or provide a Workflow evidence adapter. Issue [#16] owns the production Workflow-to-Evaluation bridge and runnable composition proof.
+3. `EvaluationExecutor` SHALL remain an object-safe, framework-neutral port. It receives validated core definitions and evidence and returns only a core-owned verdict with ordered findings; framework types SHALL NOT enter core signatures.
+4. The `local` feature SHALL expose `local::DeterministicCriteriaEvaluator`, the runtime-free reference implementation for exact output and the two closed event predicates.
+5. The `serdes-ai-evals` Cargo feature SHALL expose `serdes_ai_evals::SerdesAiEvalsExecutor`. The adapter SHALL contain `serdes-ai-evals`, preserve V1 byte-comparison semantics and ordered findings, and SHALL NOT claim model judging, network access, or runtime ownership.
+6. Executor futures SHALL use the standard-library `Future` seam. Callers own polling and cancellation. Dropping a future cancels only by drop; executors SHALL start no detached work and claim no cancellation acknowledgement, cross-process cancellation, timeout, retry, or recovery guarantee.
+7. Core service code SHALL retain ownership of tenant/run binding, evidence and criterion digests, logical result identity, canonical result bytes, content hashes, and assessment validation. An executor cannot supply or override those fields.
+8. `EvaluationStore` SHALL create-or-match immutable content-addressed records; conflicting identity/content is an error. Reads SHALL be tenant-first, and cross-tenant access SHALL be indistinguishable from absence.
+9. The `memory` feature SHALL expose only bounded process-local result storage through `memory::InMemoryEvaluationStore`. It SHALL NOT adapt Workflow evidence and SHALL claim no persistence, restart durability, cross-process visibility, or crash atomicity. Default hard ceilings are 1,024 results per tenant and 4,096 globally; reaching either ceiling refuses growth without eviction.
+10. The `settings` feature SHALL expose closed Serde/Schemars V1 configuration for `local_deterministic`, `serdes_ai_evals`, and bounded `in_memory` storage. A composition root owns configuration sources, feature-availability errors, and backend construction.
+11. The `mcp` feature SHALL preserve exactly three tools: `evaluation_validate`, `evaluation_evaluate_run`, and `evaluation_get_result`. Their exact Policy capabilities remain `EvaluationValidate`, `EvaluationEvaluate`, and `EvaluationGet`, respectively.
+12. MCP handlers SHALL first enforce only the serialized parameter-DTO size ceiling, then derive trusted context and authorize the exact capability, then perform semantic validation and any reader/store effect. Denied requests SHALL NOT reveal semantic validity and SHALL make no reader/store call.
+13. Evaluation's MCP adapter SHALL NOT claim a full MCP or JSON-RPC envelope limit. Bounding before envelope buffering/deserialization, stdio or other transport binding, Tokio startup, and orderly shutdown belong to the composition transport.
+14. Allowed MCP operations SHALL preserve tenant-first lookup, immutable create-or-match behavior, safe public projections, and unchanged V1 semantics. Evaluation results may be linked by later Workflow projections but SHALL never alter Workflow state.
+
+Non-goals: model-judged evaluation, UI/dashboard suites, experiment runners, arbitrary public scorer callbacks, direct provider configuration, Workflow control, durable persistence, transport lifecycle, or mesh replication.
 
 ## Normative evidence and persistence contract
 
-1. `evaluation` SHALL own `TerminalEvidenceSnapshotV1`, copied through a tenant-scoped read-only `WorkflowEvidenceReader::get_terminal(tenant_id, run_id)` port. Core SHALL reject a tenant mismatch, non-terminal status, missing attempt/scope digest, malformed event ordering, or evidence revision mismatch as an evaluation error—not a FAIL verdict.
-2. Canonical result bytes SHALL encode schema version, tenant ID, evaluator ID/version, logical evaluation key, criterion digest, full terminal evidence identity/revision/digest, verdict, and ordered findings with length-prefixed UTF-8 fields. SHA-256 hashes those bytes; timestamps are non-semantic metadata.
-3. `EvaluationStore::create_or_match` SHALL atomically return Created only when absent, Existing only when canonical bytes match, and Conflict when the same logical key resolves to different content. Logical key is `(tenant, evaluator_id, evaluator_version, criterion_digest, workflow_run_id, workflow_revision)`.
-4. Criteria are closed and bounded: `ExactOutput`, `EventKindCount { kind, expected }`, and `EventDataEquals { sequence, expected }`. Validation enforces criterion count, expected-string, event, finding, and snapshot byte ceilings. Unsupported or malformed data is an ERROR verdict.
-5. All evaluation reads and result lookups are tenant scoped and cross-tenant access is not-found.
+1. `TerminalEvidenceSnapshotV1` is an Evaluation-owned projection. Core rejects a tenant/run mismatch, non-terminal status/reason pair, missing or malformed identity/scope fields, malformed event ordering, or an exceeded bound. Invalid evidence produces an ERROR result when a snapshot was returned; absence remains not-found.
+2. Canonical result bytes encode schema version, tenant ID, evaluator ID/version, logical evaluation key, criterion digest, terminal evidence digest, verdict, and ordered findings with length-prefixed UTF-8 fields. SHA-256 hashes those bytes; backend selection and request-specific Policy decisions are not semantic result content.
+3. `EvaluationStore::create_or_match` atomically returns Created only when absent, Existing only when canonical content matches, and Conflict when the same logical key resolves to different content. The logical key is `(tenant, evaluator_id, evaluator_version, criterion_digest, workflow_run_id, workflow_revision)`.
+4. Criteria are closed and bounded: `ExactOutput`, `EventKindCount { kind, expected }`, and `EventDataEquals { sequence, expected }`. Violated criteria yield FAIL; invalid evidence or an invalid executor assessment yields ERROR/adapter failure rather than a false FAIL.
+5. `EvaluationStore` exposes tenant-scoped `get` and `list` in addition to create-or-match. Cross-tenant reads return absence.
 
-## V1 wire schema and limits
+## V1 wire schema, limits, and compatibility vectors
 
-`TerminalEvidenceSnapshotV1` fields, in canonical order: `schema_version="v1"`; `tenant_id`; `run_id`; `workflow_id`; `workflow_version`; `run_revision` as unsigned decimal; `terminal_status` (`succeeded|failed|cancelled`); `terminal_reason`; `attempt_id`; `agent_id`; `capability_scope_digest` (64 lowercase hex SHA-256); `output`; and ordered `events[] { sequence: unsigned decimal, kind, data }`. Snapshot digest is SHA-256 of its canonical bytes. Events begin at sequence 1, increase by one, have nonempty kind, maximum 64 events, 4 KiB per kind+data chunk, and 64 KiB aggregate snapshot bytes.
+`TerminalEvidenceSnapshotV1` fields, in canonical order: `schema_version="v1"`; `tenant_id`; `run_id`; `workflow_id`; `workflow_version`; `run_revision` as unsigned decimal; `terminal_status` (`succeeded|failed|cancelled`); `terminal_reason`; `attempt_id`; `agent_id`; `capability_scope_digest` (64 lowercase hexadecimal SHA-256); `output`; and ordered `events[] { sequence, kind, data }`.
 
-Canonical bytes use UTF-8 fields in the stated order. Each string is encoded as `<byte_length>:<bytes>\n`; unsigned integers use ASCII decimal encoded by the same field rule; enums use their exact lowercase spelling; lists are encoded as count then each item. No Unicode normalization, trimming, or implicit ordering occurs beyond the explicit event sequence.
+Canonical bytes use UTF-8 fields in the stated order. Each string is encoded as `<byte_length>:<bytes>\n`; unsigned integers use ASCII decimal encoded by the same field rule; enums use their exact lowercase spelling; lists encode their count followed by each item. No Unicode normalization, trimming, or implicit ordering occurs beyond explicit event sequence.
 
-`EvaluationDefinitionV1` has `schema_version="v1"`, evaluator logical ID/version, and `criteria[]` (maximum 16). `CriterionV1` is exactly `ExactOutput { expected }`, `EventKindCount { kind, expected: u32 }`, or `EventDataEquals { sequence: u64, expected }`; comparisons are byte-for-byte UTF-8 equality. Expected/output strings are at most 16 KiB; findings are at most 32 entries and 4 KiB each. Violated criteria yield FAIL; invalid definition/snapshot/limits yield ERROR.
+Events begin at sequence 1 and increase by one. The limits are 16 criteria, 64 events, 16 KiB expected/output strings, 4 KiB per event kind+data pair, 64 KiB aggregate canonical snapshot bytes, 32 findings, and 4 KiB per finding. `terminal_reason` is closed: `succeeded/completed`, `failed/invocation_failed`, and `cancelled/cancelled` are the only valid pairs.
 
-`EvaluationStore` SHALL expose `get(tenant_id, logical_key)` and `list(tenant_id)` in addition to create-or-match. Cross-tenant reads return NotFound. Result content hash is SHA-256 of canonical result bytes; criterion digest is SHA-256 of canonical definition bytes. Golden vectors for snapshot, definition, and result bytes/hashes are mandatory contract tests.
+The V1 golden cohort is exact and unchanged:
 
-`terminal_reason` is required and closed: `succeeded` requires `completed`; `failed` requires `invocation_failed`; `cancelled` requires `cancelled`. Any other status/reason pair is malformed evidence and produces an ERROR verdict.
+- snapshot digest: `400d023425c9ee77e3eb9ac40032e0871dcc3eaf6980b743f29fccdc025150eb`
+- definition/criterion digest: `5c94014a3ba627135274d1cf4c9b54e2c06af1a24e396d8d6dc3c5f6ab90d401`
+- result content hash: `03414bc05e2c0b4aae494cc0fe12473da48fa0922f637e3836662839a5bebe72`
+
+Both V1 executors SHALL reproduce the same verdict, ordered findings, digests, and result hash for the shared cohort.
+
+[#16]: https://github.com/bannff/Rust-Factory/issues/16
