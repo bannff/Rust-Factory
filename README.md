@@ -13,7 +13,7 @@ schema, error-framework, filesystem, or async-runtime dependency.
 |---|---|---|
 | `crates/agent` | `mcp` | Versioned agent definitions, registry, and bounded local runtime contracts. |
 | `crates/workflow` | `mcp`, `memory` | Bounded workflow lifecycle for one agent invocation. |
-| `crates/evaluation` | `mcp`, `memory` | Immutable evaluation contracts over terminal workflow evidence. |
+| `crates/evaluation` | `local`, `memory`, `mcp`, `serdes-ai-evals`, `settings` | Framework-backed immutable evaluation over terminal Workflow evidence, with selectable deterministic executors and bounded process-local result storage. Composition-ready; not runnable or project-ready until [#16] supplies the evidence bridge and composition proof. |
 | `crates/project` | `mcp`, `fs` | Blueprint validation, generation planning, and root-confined materialization. |
 | `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. No MCP surface, by design. |
 | `crates/memory` | `local`, `agentic`, `settings`, `mcp` | Tenant-scoped agent memory behind one framework-agnostic port. Two selectable backends and a five-tool agent surface; no durable adapter. |
@@ -22,12 +22,23 @@ schema, error-framework, filesystem, or async-runtime dependency.
 | `crates/mcp-transport` | — | Shared bounded MCP stdio transport. Owns no capability. |
 
 A `memory`, `local`, or `fs` module is a deterministic process-local adapter: no
-persistence, recovery, lease, or cross-process guarantee. A vendor module is named
-for the crate it confines — `agentic` holds `agentic-memory` and nothing else
-names it — and a `settings` module holds the shape of a project's configuration,
-never its source and never the selection-to-constructor `match`, which belong to a
-composition binary. An adapter is feature-gated even when it adds no dependency,
-so the rule that a core module names no adapter keeps applying to it.
+persistence, recovery, lease, or cross-process guarantee. Evaluation keeps these
+roles separate: `local::DeterministicCriteriaEvaluator` executes the closed V1
+criteria, while `memory::InMemoryEvaluationStore` stores at most 1,024 results
+per tenant and 4,096 globally without eviction. `memory` does not adapt Workflow
+evidence. The optional `serdes-ai-evals` feature confines the external framework
+to `serdes_ai_evals::SerdesAiEvalsExecutor`; both executors satisfy the same V1
+verdict, finding-order, digest, and hash contracts through the object-safe
+`EvaluationExecutor` seam. Executor futures are caller-polled and cancel only by
+drop; the current adapters start no detached work and claim no timeout,
+acknowledgement, retry, or recovery behavior.
+
+A vendor module is named for the crate it confines — `agentic` holds
+`agentic-memory` and nothing else names it — and a `settings` module holds the
+shape of a project's configuration, never its source and never the
+selection-to-constructor `match`, which belong to a composition binary. An
+adapter is feature-gated even when it adds no dependency, so the rule that a core
+module names no adapter keeps applying to it.
 
 `policy` has no MCP surface deliberately. It decides what an agent is permitted
 to do, so exposing it to agents would be a privilege-escalation seam whichever
@@ -55,8 +66,16 @@ make check                # the full gate, across the feature matrix
 
 The workspace produces libraries only. There is nothing to run yet: transport
 binding belongs to a `projects/` composition root, and none exists ([#6]).
+Evaluation is framework-backed and composition-ready, not runnable or
+project-ready: it intentionally has no production `WorkflowEvidenceReader`.
+Issue [#16] owns that Workflow-to-Evaluation bridge and the selected-executor
+composition proof. Evaluation MCP bounds its serialized parameter DTO only;
+the composition transport must bound the full MCP/JSON-RPC envelope before
+buffering/deserialization and own stdio or other binding, Tokio/runtime startup,
+and shutdown.
 
 [#6]: https://github.com/bannff/Rust-Factory/issues/6
+[#16]: https://github.com/bannff/Rust-Factory/issues/16
 
 ## Brick standard
 

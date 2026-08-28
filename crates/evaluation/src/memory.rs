@@ -10,12 +10,47 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     CreateOrMatch, EvaluationError, EvaluationResultV1, EvaluationStore, LogicalEvaluationKey,
-    validate_result,
+    MAX_RESULTS_GLOBAL, MAX_RESULTS_PER_TENANT, StoreGuaranteesV1, validate_result,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct InMemoryEvaluationStore {
     state: Arc<Mutex<BTreeMap<LogicalEvaluationKey, EvaluationResultV1>>>,
+    max_results_per_tenant: usize,
+    max_results_global: usize,
+}
+impl Default for InMemoryEvaluationStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl InMemoryEvaluationStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(BTreeMap::new())),
+            max_results_per_tenant: MAX_RESULTS_PER_TENANT,
+            max_results_global: MAX_RESULTS_GLOBAL,
+        }
+    }
+    pub fn with_capacities(
+        max_results_per_tenant: usize,
+        max_results_global: usize,
+    ) -> Result<Self, EvaluationError> {
+        if max_results_per_tenant == 0
+            || max_results_global == 0
+            || max_results_per_tenant > MAX_RESULTS_PER_TENANT
+            || max_results_global > MAX_RESULTS_GLOBAL
+            || max_results_per_tenant > max_results_global
+        {
+            return Err(EvaluationError::LimitExceeded);
+        }
+        Ok(Self {
+            state: Arc::new(Mutex::new(BTreeMap::new())),
+            max_results_per_tenant,
+            max_results_global,
+        })
+    }
 }
 impl EvaluationStore for InMemoryEvaluationStore {
     fn create_or_match(
@@ -29,6 +64,15 @@ impl EvaluationStore for InMemoryEvaluationStore {
             .map_err(|_| EvaluationError::AdapterFailure)?;
         match state.get(&result.logical_key) {
             None => {
+                let tenant_count = state
+                    .keys()
+                    .filter(|key| key.tenant_id == result.logical_key.tenant_id)
+                    .count();
+                if state.len() >= self.max_results_global
+                    || tenant_count >= self.max_results_per_tenant
+                {
+                    return Err(EvaluationError::LimitExceeded);
+                }
                 state.insert(result.logical_key.clone(), result.clone());
                 Ok(CreateOrMatch::Created(result))
             }
@@ -61,6 +105,16 @@ impl EvaluationStore for InMemoryEvaluationStore {
             .filter(|result| result.logical_key.tenant_id == tenant_id)
             .cloned()
             .collect())
+    }
+    fn guarantees(&self) -> StoreGuaranteesV1 {
+        StoreGuaranteesV1 {
+            durable_across_restart: false,
+            visible_across_processes: false,
+            crash_atomic: false,
+            evicts_on_capacity: false,
+            max_results_per_tenant: self.max_results_per_tenant,
+            max_results_global: self.max_results_global,
+        }
     }
 }
 

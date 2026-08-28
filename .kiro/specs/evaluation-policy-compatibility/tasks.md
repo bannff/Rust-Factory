@@ -1,22 +1,41 @@
-# Tasks
+# Tasks: Evaluation Policy Compatibility
 
-- [x] Add `policy` only to `evaluation::mcp` and replace the legacy trusted-context constructor seam with the verified Policy compatibility resolver.
-- [x] Add private bounded stdio JSON-RPC transport with a 64 KiB pre-deserialization inbound frame limit.
-- [x] Validate bounded input before trusted-context/Policy access; authorize the exact Evaluation capability before reader/store access.
-- [x] Prove source failure, deny, and tampered Allow decision make zero reader/store calls for validate, evaluate, and get.
-- [x] Prove invalid/oversized semantic input makes zero source/Policy/reader/store calls.
-- [x] Prove allowed evaluate/get retain immutable create-or-match, tenant non-disclosure, read-only Workflow evidence behavior, and safe output projections.
-- [x] Prove bounded stdio transport accepts valid fragmented input and terminates oversized frames before dispatch.
-- [x] Confirm Evaluation core/memory public contracts and canonical result hash are unchanged; no policy decision is persisted.
-- [x] Run `cargo test -p evaluation --features mcp,memory`.
-- [x] Run QA, security, Rust SME, architecture gates, and `make check`.
+## Implemented
 
-## Acceptance evidence
+- [x] Keep `policy` confined to `evaluation::mcp`; core and all non-MCP adapters remain Policy-free.
+- [x] Inject host-owned `TrustedContextSource` and `PolicyResolver` through `EvaluationPolicyContextResolver`.
+- [x] Preserve exactly three tools and mappings: validate/`EvaluationValidate`, evaluate/`EvaluationEvaluate`, get/`EvaluationGet`.
+- [x] Enforce serialized parameter-DTO size before trusted-context/Policy access.
+- [x] Authorize before semantic validation so denial does not disclose semantic validity.
+- [x] Perform reader/store effects only after successful authorization and semantic validation.
+- [x] Verify source failure, deny, and tampered Allow decision evidence make zero reader/store calls.
+- [x] Verify post-Policy invalid semantic input makes zero reader/store calls.
+- [x] Preserve immutable create-or-match behavior, tenant non-disclosure, exact V1 hashes, read-only evidence behavior, and safe projections for allowed operations.
+- [x] Keep Policy decisions out of canonical result content and preserve core/non-MCP public contracts.
+- [x] Bound canonical result bytes, serialized result bytes, and JSON-escaped MCP tool text.
+- [x] Document that Evaluation's 65,536-byte request ceiling measures a serialized parameter DTO, not a full MCP/JSON-RPC envelope.
 
-- Rust SME approved the specification and final implementation.
-- QA approved pre-domain authorization, tenant, immutable-result, and transport boundary coverage.
-- Security approved the verified resolver and 64 KiB LF/CRLF pre-deserialization transport cap after the CRLF boundary regression fix.
-- Architecture approved adapter-only Policy/framework containment and unchanged Evaluation core/memory contracts.
-- `make check` passed after the final migration change.
+## Composition and acceptance still open
 
-Promotion, experiment execution, durable persistence, and shared MCP transport extraction remain explicitly out of scope.
+- [ ] Add and validate full MCP/JSON-RPC envelope bounds before buffering/deserialization in the composition transport; Evaluation owns no private stdio/Tokio transport.
+- [ ] Supply the production Workflow evidence bridge and runnable composition proof under [#16].
+- [x] Rerun focused Evaluation tests across the final MCP feature combination.
+- [x] Record fresh current-tree QA and security decisions for the completed compatibility boundary.
+- [x] Record final Rust SME decision as APPROVE.
+- [x] Record final meta-architecture decision as APPROVE.
+- [x] Rerun and record the final `make check` result.
+
+## Gate decisions
+
+- **QA — APPROVE.** Verified `make check`, the MCP-only feature build, local/`serdes-ai-evals` parity, default-feature isolation, exact V1 vectors, and memory/settings contracts against the current tree.
+- **Security — APPROVE.** Verified Policy ordering, the parameter-DTO/full-envelope ownership boundary, escaped egress, redaction, tenant/store bounds, and cancellation by drop with no detached work against the current tree.
+- **Final Rust SME — APPROVE.** No Blocker or Required findings remain.
+- **Final meta-architecture — APPROVE.** No Blocker or Required findings remain after the current-tree evidence re-review.
+
+## Evidence boundary
+
+The implementation and contract tests prove Policy confinement, exact capability selection, verified Allow-digest handling, DTO-size-before-Policy ordering, Policy-before-semantics ordering, zero domain effects on failure, safe egress, and unchanged V1 semantic hashes. Focused Evaluation tests and the repository-wide `make check` passed during this documentation update. They do not prove pre-deserialization envelope bounds, transport lifecycle, production Workflow evidence acquisition, or runnable composition.
+
+Promotion, experiment execution, model judging, durable persistence, retries, and shared runtime ownership remain out of scope.
+
+[#16]: https://github.com/bannff/Rust-Factory/issues/16

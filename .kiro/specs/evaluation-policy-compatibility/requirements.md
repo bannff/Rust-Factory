@@ -1,21 +1,27 @@
 # Evaluation Policy Compatibility
 
-Migrate Evaluation MCP to host-derived trusted context and Policy V1 decisions while preserving Evaluation’s immutable, read-only core semantics.
+Evaluation MCP uses host-derived trusted context and exact Policy V1 decisions while preserving Evaluation's immutable, read-only core semantics.
 
-1. Only `evaluation::mcp` gains an adapter-facing exact local dependency on `policy`; `evaluation` and `evaluation::memory` remain Policy-free.
-2. `evaluation::mcp` SHALL receive a host-owned `TrustedContextV1` source plus `PolicyResolver` through a verified compatibility resolver. No caller MCP field establishes identity.
-3. After bounded syntactic and semantic validation, but before any evidence-reader or result-store access, every operation SHALL authorize its exact closed capability: validate → `EvaluationValidate`; evaluate run → `EvaluationEvaluate`; get result → `EvaluationGet`.
-4. The resolver SHALL canonicalize an Allow grant and recompute the request-bound decision digest. Host-source failure, trusted-context conversion failure, canonicalization failure, or a tampered Allow digest maps to `operation_failed`; deny maps to `not_found`. Each failure/deny path makes zero reader/store calls.
-5. Invalid or oversized MCP input SHALL make zero trusted-context, Policy, reader, or store calls. Validation checks the definition before authorization; evaluate/get validate their complete bounded input before authorization.
-6. An allowed operation preserves current Evaluation behavior: tenant-first evidence/result lookups, immutable create-or-match records, stable public projection, and no Workflow mutation.
-7. Evaluation SHALL NOT consume `GrantV1` as an execution ceiling, persist a request-specific decision digest, mutate Workflow, invoke an Agent, introduce experiment execution/promotion, Policy MCP, retries, or a Policy dependency in a core crate. A decision is authorization evidence for one request, not semantic Evaluation-result content.
+1. Only the `evaluation::mcp` adapter has a local dependency on `policy`; the framework-neutral core, `local`, `memory`, `serdes_ai_evals`, and `settings` remain Policy-free.
+2. `evaluation::mcp` SHALL receive a host-owned `TrustedContextV1` source plus `PolicyResolver` through `EvaluationPolicyContextResolver<T, P>`. No caller MCP field establishes tenant, principal, request, or correlation identity.
+3. Each handler SHALL first enforce the serialized parameter-DTO size ceiling. This is framing validation only and SHALL NOT perform semantic domain validation.
+4. After DTO framing, but before semantic validation or reader/store access, the adapter SHALL resolve trusted context and authorize the operation's exact closed capability: `evaluation_validate` → `EvaluationValidate`; `evaluation_evaluate_run` → `EvaluationEvaluate`; `evaluation_get_result` → `EvaluationGet`.
+5. The resolver SHALL canonicalize an Allow grant and recompute its request-bound decision digest. Host-source failure, trusted-context failure, canonicalization failure, or a tampered Allow digest maps to `operation_failed`; deny maps to `not_found`. Each failure/deny path makes zero reader/store calls.
+6. Semantic validation SHALL occur only after successful authorization. This ordering prevents denial from revealing whether a definition, run ID, or result key is semantically valid. Semantically invalid requests make zero reader/store calls.
+7. An allowed, valid operation preserves Evaluation behavior: tenant-first evidence/result lookup, immutable create-or-match records, stable public projections, exact V1 hashes, and no Workflow mutation.
+8. Evaluation SHALL NOT consume `GrantV1` as an execution ceiling, persist a request-specific decision digest, mutate Workflow, invoke an Agent, introduce experiment execution/promotion, expose Policy over MCP, retry work, or add Policy to a core module. A Policy decision authorizes one request and is not semantic Evaluation-result content.
+9. The adapter SHALL enforce bounded canonical result, serialized result, and JSON-escaped tool-text egress and project private adapter/framework failures only as safe public errors.
 
-## Bounded MCP ingress
+## Transport ownership
 
-`evaluation::mcp` SHALL replace direct `rmcp::transport::stdio()` use with an adapter-private bounded newline-delimited JSON-RPC transport. A complete inbound frame, excluding LF and optional CR delimiter, is at most 64 KiB. The transport bounds incrementally before JSON-RPC or `Parameters<T>` deserialization, retains valid partial-frame state across cancelled receives, and terminates the stdio connection without a response on oversized framing input. An oversized frame reaches no trusted-context source, Policy resolver, reader, or store. Valid frames retain rmcp-defined parsing behavior.
+The 65,536-byte Evaluation request limit measures the serialized parameter DTO after MCP/JSON-RPC deserialization. It is not a full envelope limit and cannot protect pre-deserialization buffering.
 
-The transport is adapter-only. It does not add a framework dependency to Evaluation core/memory or establish a shared Factory runtime abstraction. A common internal MCP utility may be specified only after Evaluation and Workflow prove identical stable requirements.
+A composition transport SHALL bound the complete MCP/JSON-RPC envelope before buffering/deserialization and own connection behavior for oversized input. The composition root owns stdio or other transport binding, Tokio/runtime startup, trusted-context source construction, Policy composition, concrete adapter injection, cancellation/shutdown, and process lifecycle. Evaluation SHALL NOT provide a private stdio transport or claim those guarantees.
 
 ## Compatibility
 
-The public `EvaluationMcp` constructor intentionally changes from the legacy local `TrustedContextResolver` seam to a verified `EvaluationPolicyContextResolver<T, P>` seam. The legacy context resolver/type is removed rather than retained as an unprotected construction path. `evaluation` and `evaluation::memory` public contracts, canonical result bytes/hash, and tenant-first store/evidence APIs remain unchanged.
+The three tool names and exact capabilities are unchanged. `EvaluationMcp` accepts an injected `EvaluationService` and verified `EvaluationPolicyContextResolver`; its schemas remain closed and expose no identity, Policy, grant, decision, or backend fields.
+
+The core public contracts, object-safe executor seam, local and `serdes-ai-evals` executors, bounded result store, canonical bytes, and exact V1 hashes remain independent of request-specific authorization. `evaluation::memory` stores results only. Issue [#16] separately owns the production Workflow-to-Evaluation evidence bridge and runnable composition proof.
+
+[#16]: https://github.com/bannff/Rust-Factory/issues/16

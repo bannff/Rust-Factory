@@ -1,27 +1,41 @@
 # Tasks: Evaluation
 
-- [x] 1. Create `evaluation` with versioned definitions, criteria, evidence refs, verdicts, immutable result records, digests, and errors.
-- [x] 2. Define read-only `WorkflowEvidenceReader` and create-or-match `EvaluationStore` ports.
-- [x] 3. Implement deterministic exact-output and closed predicate criteria with fail-closed evidence validation.
-- [x] 4. Create `evaluation::memory` deterministic workflow-evidence reader and immutable result store.
-- [x] 5. Test tenant isolation, non-terminal/malformed evidence rejection, PASS/FAIL/ERROR distinction, content-hash stability, and create-or-match conflicts.
-- [x] 6. Create `evaluation::mcp` with trusted-context injection and validate/evaluate_run/get_result operations.
-- [x] 7. Contract-test MCP schemas, safe public errors, immutable result projections, and absence of Workflow mutation capability.
-- [x] 8. Accept the initial Evaluation vertical slice: QA/security/architecture approvals and `make check` passed.
-- [x] 9. Accept the separate Evaluation MCP Policy compatibility migration: verified host context/Policy authorization, exact capability mapping, bounded stdio ingress, QA/security/Rust SME/architecture approval, and `make check` recorded in `../evaluation-policy-compatibility/`.
+## Implemented
 
-## Rust design-gate constraints
+- [x] 1. Preserve Evaluation-owned V1 models, validation, canonical encodings, immutable result identity, exact logical keys, typed errors, and tenant-first ports.
+- [x] 2. Add the object-safe, framework-neutral `EvaluationExecutor` and caller-polled standard-library future seam without selecting an async runtime.
+- [x] 3. Add `local::DeterministicCriteriaEvaluator` as the deterministic reference executor for all three closed V1 criteria.
+- [x] 4. Add the `serdes-ai-evals` feature and confined `serdes_ai_evals::SerdesAiEvalsExecutor` with V1 verdict/finding/hash parity and safe framework-error reduction.
+- [x] 5. Keep core ownership of evidence/criterion digests, logical result identity, content hashes, and executor-assessment validation.
+- [x] 6. Restrict `evaluation::memory` to bounded process-local immutable result storage with 1,024-per-tenant and 4,096-global maxima, no eviction, and truthful guarantees.
+- [x] 7. Add closed `settings` DTOs for `local_deterministic`, `serdes_ai_evals`, and bounded `in_memory` storage; leave source loading and construction to composition.
+- [x] 8. Route the unchanged three MCP tools through the injected `EvaluationService`/executor while preserving exact Policy capability mapping and safe result projections.
+- [x] 9. Enforce serialized parameter-DTO size before Policy, then trusted context/exact capability authorization, then semantic validation and reader/store effects.
+- [x] 10. Preserve exact V1 hashes: snapshot `400d023425c9ee77e3eb9ac40032e0871dcc3eaf6980b743f29fccdc025150eb`, definition `5c94014a3ba627135274d1cf4c9b54e2c06af1a24e396d8d6dc3c5f6ab90d401`, result `03414bc05e2c0b4aae494cc0fe12473da48fa0922f637e3836662839a5bebe72`.
+- [x] 11. Add public, executor parity, memory capacity/concurrency, settings/schema, Policy-ordering, safe-egress, and object-safety contract tests.
+- [x] 12. Document truthful cancellation-by-drop: callers own polling; current executors start no detached work and provide no timeout, acknowledgement, retry, cross-process cancellation, or recovery guarantee.
 
-- [x] Define `TerminalEvidenceSnapshotV1`, canonical-byte encoding, semantic SHA-256 content hash, tenant-scoped reader, and exact logical evaluation key before implementation.
-- [x] Define closed criterion variants and all byte/count/event/finding ceilings before implementation.
-- [x] Add contract tests for canonical/hash stability and mutation, tenant non-disclosure, snapshot integrity, concurrent create-or-match, criterion ordering/limits, and malformed evidence ERROR behavior.
-- [x] Keep `evaluation` independent of `workflow::memory`, MCP, and concrete `workflow::Run`; `evaluation::memory -> evaluation + workflow`; `evaluation::mcp -> evaluation + MCP` with injected ports.
+## Composition and acceptance still open
 
-- [x] Add golden byte/hash vectors for V1 snapshot, definition, and immutable result canonical encodings.
-- [x] Implement tenant-first `EvaluationStore::get`/`list` and test cross-tenant NotFound behavior.
+- [ ] 13. Implement and test the production `WorkflowEvidenceReader` bridge in a composition root without adding a `workflow` dependency to Evaluation ([#16]).
+- [ ] 14. Prove runnable selected-executor composition over terminal Workflow evidence under [#16].
+- [x] 15. Rerun the focused Evaluation feature matrix after the final documentation/code state, including local, memory, MCP, settings, and `serdes-ai-evals` combinations.
+- [x] 16. Record fresh current-tree QA and security gate decisions for the completed implementation.
+- [x] 17. Record final Rust SME decision as APPROVE for the completed implementation and documentation.
+- [x] 18. Record final meta-architecture decision as APPROVE.
+- [x] 19. Rerun and record the final `make check` result.
 
-## Validation matrix and evidence
+## Gate decisions
 
-Narrow command: `cargo test -p evaluation --features mcp,memory`. Required: canonical-byte/hash golden vectors, criteria PASS/FAIL/ERROR, tenant non-disclosure, create-or-match conflict/concurrency, MCP schema/projection. Conditional: fuzz canonical codecs; loom for future store synchronization changes. N/A: generated fixture and sandbox tests.
+- **QA — APPROVE.** Verified `make check`, the MCP-only feature build, local/`serdes-ai-evals` parity, default-feature isolation, exact V1 vectors, and memory/settings contracts against the current tree.
+- **Security — APPROVE.** Verified Policy ordering, the parameter-DTO/full-envelope ownership boundary, escaped egress, redaction, tenant/store bounds, and cancellation by drop with no detached work against the current tree.
+- **Final Rust SME — APPROVE.** No Blocker or Required findings remain.
+- **Final meta-architecture — APPROVE.** No Blocker or Required findings remain after the current-tree evidence re-review.
 
-Implementation/QA evidence: evaluation, evaluation::memory, and evaluation::mcp are present; QA added golden vectors, semantic mutations, closed criteria, malformed/cross-tenant ERROR behavior, immutable store concurrency, and MCP contract coverage. Initial-slice security and architecture approval is recorded above; Policy compatibility is deliberately a separate migration.
+## Evidence boundary
+
+Implemented tests cover the exact canonical vectors, cross-executor V1 parity, object-safe ports, malformed executor assessments, process-local store bounds and races, closed settings schemas, exact MCP tools/capabilities, pre-Policy DTO sizing, post-Policy semantic validation, zero domain effects on deny/failure, and bounded safe projections. `cargo test -p evaluation --all-features` and the repository-wide `make check` passed during this documentation update. This evidence does not provide a production Workflow evidence reader or runnable transport/composition proof.
+
+Full MCP/JSON-RPC envelope bounds before buffering/deserialization, transport binding, Tokio/process lifecycle, adapter construction, and shutdown belong to a composition binary and its transport. `evaluation::memory` stores results only and SHALL NOT be treated as the missing Workflow bridge.
+
+[#16]: https://github.com/bannff/Rust-Factory/issues/16
