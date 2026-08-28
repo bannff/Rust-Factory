@@ -6,7 +6,7 @@ Tenant-scoped agent memory behind a framework-agnostic port, with the concrete b
 
 1. The brick SHALL own typed memory records, their validation, a stable error taxonomy, and one consumed effect port for storage. It SHALL NOT own embeddings, graph traversal, similarity, causal inference, centrality, decay, or belief revision; those are `graph`-family concerns and are deferred.
 2. The port SHALL be narrow enough that a plain key-value, SQL, or document backend can implement all of it. A capability that only some backends can serve SHALL be a separate port that only capable adapters implement, so a caller discovers the gap when composing rather than when calling.
-3. The brick SHALL NOT expose an MCP surface until a bounded operational surface is specified. Requirement 9 records why that is gated rather than merely absent.
+3. The brick exposes a bounded MCP surface of five tools, specified in requirement 10.
 
 ## 2. Port contract
 
@@ -35,7 +35,7 @@ Every implementation SHALL honour eight clauses, each covered by the shared conf
 
 Per requirement 8 of the [Canonical Brick Standard](../brick-standard/requirements.md):
 
-- `serde` and `schemars` appear only in the `settings` module, at the configuration DTO boundary.
+- `serde` and `schemars` appear only in the feature-gated `settings` and `mcp` adapter modules, at configuration and external transport DTO boundaries.
 - Identifiers (`TenantId`, `Namespace`, `RecordKey`, `RunId`) wrap a private field behind a fallible constructor, so an invalid one cannot exist.
 - Aggregates (`MemoryRecord`, `MemoryQuery`) have public fields. `MemoryRecord::validated` is a checkpoint, not a type-level property: a caller can mutate a field afterwards. Clause 6 of the port is the enforcement point. This is a deliberate, recorded departure from a strict newtype-everything reading of requirement 8; the alternative buys no safety once ingress validation exists and makes the aggregate tedious to pattern match in exactly the code that most needs to.
 - Every limit is the brick's own constant, never inherited from a vendor. A vendor patch release SHALL NOT be able to change this brick's public contract.
@@ -46,7 +46,7 @@ Per requirement 8 of the [Canonical Brick Standard](../brick-standard/requiremen
 
 That is the whole of the guarantee. `MemoryContext::new` and `TenantId::new` are both public, so any code that can name a tenant string can mint a context. Construction is therefore a **privileged operation**, and keeping it privileged is a property of how a composition root distributes contexts, not something the brick enforces.
 
-Consequently, when the MCP surface of requirement 9 is specified it SHALL derive the tenant from host-established identity per requirement 7(e) of the brick standard, and SHALL NOT build a context from a request payload. `policy::GrantV1` already carries `memory_enabled`, but `CapabilityV1` has no memory variants and this brick consults no resolver on any path; adding those variants and an authorization call is part of requirement 9, not of this specification.
+The MCP surface of requirement 10 therefore derives the tenant from host-established identity per requirement 7(e) of the brick standard and never builds a context from a request payload. `CapabilityV1` carries the five memory variants and `MemoryPolicyContextResolver::authorize` runs on every tool path, checking both the capability and `policy::GrantV1::memory_enabled`. The typed Rust API remains unauthorized by design: a composition root that constructs `MemoryContext` directly is the trusted party.
 
 `MemoryError::TenantMismatch` projects publicly to `not_found`, and `Debug` is hand-written to print only the public code, so neither `{}` nor `{:?}` can confirm that a key exists in another tenant.
 
@@ -59,6 +59,7 @@ A brick is one crate; adapters are feature-gated modules. No feature is enabled 
 | `local` | `local` | A concrete core-owned stateful port with truthful process-local semantics. Std-only, and also the reference behaviour for the port contract. |
 | `agentic` | `agentic` | Implements one existing core port using `agentic-memory`. |
 | `settings` | `settings` | A bounded declarative selection surface whose DTOs need `serde` and `schemars`. |
+| `mcp` | `mcp` | A bounded operational surface (requirement 10). |
 
 Three rules this brick establishes and that requirement 5 of the brick standard now records:
 
@@ -108,16 +109,109 @@ Alternatives considered and rejected: `conch-core` (281 crates; pulls `ort`, `hf
 - `tests/service_contract.rs` — gated `local`: provenance stamping from the injected clock, tenant scoping, deployment result ceiling, and defence in depth against a scripted store that returns foreign, misaddressed, over-long, or failing results.
 - `tests/adapter_contract.rs` — gated `local`: one generic conformance suite over all eight clauses, run against **every** adapter, plus a cross-adapter agreement test that compares records and ordering without sorting, and a tractability guard that a query stays cheap after the writes that break the vendor's fast path.
 
+- `src/mcp.rs`'s own `#[cfg(test)] mod tests` — the MCP surface is tested in-module, matching `observability` and `evaluation`, because its fixtures are a policy resolver and a trusted-context source rather than a store, and because the `*_json` methods it exercises are private. `make check` runs it through `cargo test -p memory --features mcp` and `--features mcp,local`. The load-bearing cases: two-tenant isolation across all four data tools, all five refusal modes reaching no store, a test that drives the five `#[tool]` functions themselves so a miswired tool body cannot pass, the framed-wire-size bound, a worst-case page at every ceiling simultaneously, and capacity reached through the surface.
+
 Adding an adapter means adding one `#[test]` that calls `run_conformance`. If it passes, the adapter is substitutable.
 
 ## 9. Named gaps
 
-None of these is claimed as done:
+None of these is claimed as done. The list is numbered contiguously across sections 9 and 10.7 so a gap keeps one stable identifier; section 9 is what the capability lacks, section 10.7 what its MCP surface lacks.
 
 1. **No durable adapter.** Both adapters are in-process and report no durability. Leases, recovery, cross-process cancellation, and exactly-once effects need their own specified adapter.
-2. **No `mcp` module.** Requires a bounded operational surface, the trusted-context derivation of requirement 5, and `CapabilityV1` memory variants.
-3. **`agent::MemoryStore` not migrated.** `agent` still carries a provisional `recall`/`write` port against a `Vec<String>` stub. Replacing it with this port is a separately gated one-way migration.
-4. **Declarative selection is not proven end to end.** No binary consumes `settings` yet, so the path from a file to a constructed adapter is specified but unexercised. The first composition binary closes this.
-5. **No supply-chain gate.** No `cargo-deny` or `cargo-audit` in `make check`, so the new pin has no advisory monitoring. Workspace-level follow-up.
-6. **`FixedClock` is a test double in a production module.** Recorded exception; it moves to a `role = "test-support"` package once two consumers need shared fixtures.
-7. **Tenant count is unbounded.** Capacity is bounded per tenant, so one tenant cannot exhaust the host, but admitting unbounded tenants is a deployment admission-control concern this brick does not own.
+2. **`agent::MemoryStore` not migrated.** `agent` still carries a provisional `recall`/`write` port against a `Vec<String>` stub. Replacing it with this port is a separately gated one-way migration.
+3. **Declarative selection is not proven end to end.** No binary consumes `settings` yet, so the path from a file to a constructed adapter is specified but unexercised. The first composition binary closes this.
+4. **No supply-chain gate.** No `cargo-deny` or `cargo-audit` in `make check`, so the new pin has no advisory monitoring. Tracked as [#24](https://github.com/bannff/Rust-Factory/issues/24).
+5. **`FixedClock` is a test double in a production module.** Recorded exception; it moves to a `role = "test-support"` package once two consumers need shared fixtures.
+6. **Tenant count is unbounded.** Capacity is bounded per tenant, so one tenant cannot exhaust the host, but admitting unbounded tenants is a deployment admission-control concern this brick does not own.
+
+## 10. MCP surface
+
+Five tools, each with its own `policy::CapabilityV1` variant so a grant can permit reading without permitting mutation:
+
+| Tool | Capability | Core call |
+|---|---|---|
+| `memory_remember` | `MemoryRemember` | `remember` |
+| `memory_recall` | `MemoryRecall` | `recall` |
+| `memory_search` | `MemorySearch` | `search` |
+| `memory_forget` | `MemoryForget` | `forget` |
+| `memory_status` | `MemoryStatus` | `guarantees` + `result_ceiling` |
+
+The wire names are bound into the policy decision digest, so they are permanent contracts.
+
+### 10.1 Authorization is capability **and** grant
+
+`MemoryPolicyContextResolver::authorize` resolves host-derived `TrustedContextV1`, calls `PolicyResolver::authorize`, **re-derives the decision digest and rejects a mismatch**, and only then consults `effective_grant.memory_enabled`. Both the capability and the flag must hold.
+
+The digest is an unkeyed hash over public canonical bytes, so what re-derivation buys is detection of a decision **mutated after the resolver produced it** — an intermediary flipping a grant flag. It is not a signature and does not authenticate the resolver, which is trusted by injection. Stating that precisely matters: a reader who thinks it is a signature will size their threat model wrong.
+
+The flag is checked after digest verification, not before. `memory_enabled` is inside the digest's canonical bytes, so a flag flipped after signing changes the expected digest — verifying first means the flag is never acted on before it is proven authentic.
+
+`memory_enabled` is not redundant with the capability. `workflow` projects it into its effective capability ceiling and `agent` intersects it into an agent's memory scope, so a surface that ignored it would be a way around a ceiling those bricks already enforce.
+
+### 10.2 Ordering: transport ceilings before the gate, semantics after
+
+Only transport ceilings run before authorization. Every semantic check — identifier grammar, record validity, query validity — runs after it.
+
+A ceiling reveals nothing beyond the published schema. A validation *result* is an oracle: an unauthorized caller able to distinguish `invalid_id` from a refusal has learned its request reached the validator. So an unauthorized caller receives `unauthorized` whatever it sends.
+
+### 10.3 The surface accepts a strict subset of core-valid records
+
+`mcp-transport`'s frame limit is 64 KiB and overflow is **terminal** — the session closes with no error reaching the caller. `MAX_RECORD_BYTES` is ~98 KiB before escaping. So the MCP ceilings are deliberately tighter, and they are **consistent by construction**: a compile-time assertion requires
+
+```text
+MAX_MCP_QUERY_LIMIT * MAX_MCP_RECORD_PROJECTION_BYTES + DEFERRAL_RESERVE_BYTES
+    <= MAX_MCP_SERIALIZED_RESULT_BYTES
+```
+
+An earlier revision chose the query limit and the response ceiling independently; six legitimately written records then made `memory_search` fail permanently. The assertion exists so that cannot recur silently.
+
+The response ceiling is half of an **escaped tool-text** ceiling. A tool returns a `String` which the protocol embeds as a JSON string, so quotes and backslashes are escaped a second time and a worst-case response can roughly double. The brick measures that escaped text directly and keeps conservative composition headroom, but it does not claim the complete JSON-RPC envelope fits: the caller-controlled request ID is known only at the composition boundary.
+
+That measured check is load-bearing for the projection itself, not a full-frame proof: halving is a good rule but not a strict implication, since a 28,672-byte response consisting entirely of backslashes escapes to 57,346 bytes. The measurement catches it and the result is `limit_exceeded`; the first server binary must separately enforce and test the complete outbound envelope.
+
+Content and tag ceilings are measured on the **JSON serialized** form, not the raw string. `serde_json` escapes a control character to `\u00XX`, so 4 KiB of raw control bytes serializes to 24 KiB; a raw-length check bounds nothing. Multi-byte UTF-8 passes through unescaped and is bounded by its byte length.
+
+### 10.4 Neither truncation nor blanket refusal
+
+`search` returns `records`, `deferred_keys`, and `oversized_keys`.
+
+Silently shortening a list is indistinguishable from there being no more data — the failure `MemoryService::search` refuses to commit. But refusing a whole page is not acceptable either: one record written through the typed API at full core limits would make a namespace permanently unsearchable at every limit, with no recovery.
+
+So a record that does not fit the remaining budget is **named** in `deferred_keys`, and a record too large to project even alone is **named** in `oversized_keys`. The page is always explicitly partial and the caller always has a key to act on.
+
+The returned page is **not** a prefix of the service's result order: the projection loop continues past a deferred record, so a later smaller record can still be admitted. That is harmless while every key is named, but a future `MemoryQuery` cursor (gap 13) SHALL NOT be built on an assumed prefix, and `deferred_keys` should then be re-derived from the cursor rather than kept as a second parallel model of partiality. `recall` of an unprojectable record returns `limit_exceeded`, never `null` — confusing "too big to send" with "not there" is the one outcome that would make this surface unsafe to build on.
+
+### 10.5 Refusal is distinguishable from failure
+
+`MemoryError::Unauthorized` projects to `unauthorized`, distinct from `adapter_failure`. A caller must be able to tell a permanent refusal from a transient fault or it retry-loops on a capability it will never hold. The variant carries no reason: denial, `memory_enabled = false`, a tampered digest, and a failure to establish identity are indistinguishable, so it cannot be used to probe which capabilities exist.
+
+**Deliberate deviation from the sibling bricks.** There are three refusal contracts on this control plane:
+
+| Brick | Denial projects to | Gate failure projects to |
+|---|---|---|
+| `agent` | `not_found` | `operation_failed` |
+| `evaluation` | `not_found` | `operation_failed` |
+| `observability` | `operation_failed` | `operation_failed` |
+| `memory` | `unauthorized` | `unauthorized` |
+
+Memory's reasoning: `not_found` buys no secrecy, because a tool's existence is already public through `tools/list`, and it costs an agent the ability to stop retrying. `observability`'s `operation_failed` is the worst of the three — it makes a permanent refusal look transient, which is precisely the retry loop this variant exists to prevent.
+
+Memory also differs in the other direction: it collapses denial, `memory_enabled = false`, a tampered digest, and a failure to establish identity into one code, where `agent` distinguishes denial from gate failure. That is deliberate — a caller can act on none of those distinctions and each one it can observe is a probe — but it is a second axis of divergence, not only a different code.
+
+Four contracts on one control plane is a defect regardless of which is right. Reconciliation is a breaking wire-behaviour change to three shipped surfaces and needs its own gate; it is tracked as [#20](https://github.com/bannff/Rust-Factory/issues/20), and `policy`'s contract matrix — which currently mandates the `not_found` behaviour memory departed from — is where a future surface author will look.
+
+### 10.6 Projection
+
+`namespace`, `key`, `kind`, `content`, `tags`, `recorded_at_micros`. Omitted: `tenant_id` (derived, never a caller's business), `metadata` (opaque and unbounded in shape), and `provenance.run_id` (identifies another actor's run).
+
+`metadata` is not accepted on ingress either — it has no core meaning and admitting it multiplies the worst-case frame for no capability tags do not already provide.
+
+### 10.7 MCP-specific gaps
+
+7. **No principal scoping.** Authorization is per tenant and capability; `TrustedContextV1.principal_id` is not used to scope records. Every principal in a tenant sees every record in it.
+8. **No mutation evidence.** `memory_remember` and `memory_forget` are consequential and emit no audit record. `observability` exists but this brick has no integration with it, so a destructive call leaves no trace beyond its effect.
+9. **`run_id` is unverified caller input.** It is written into `Provenance` — the field the core calls what makes a learning loop auditable — and is deliberately not projected back, so a reader cannot detect forged run attribution and `search` cannot filter on it. An authorized caller can attribute a memory to another actor's run.
+10. **Capacity is not discoverable, and is shared within a tenant.** `memory_status` reports the result ceiling and content limit but not `MAX_PARTITION_RECORDS` or `MAX_TENANT_NAMESPACES`, so a caller learns those only by being refused. There is no per-principal quota: one principal can consume a tenant's whole allowance and starve its peers. A replace always still succeeds, so nothing becomes unrepairable.
+11. **`memory_forget` is irreversible and unaudited.** No tombstone, no event, no rate limit, and no observability integration. Today the blast radius is one process lifetime because both adapters are in-process. **Composing a durable store behind this surface SHALL require an audit seam first.**
+12. **The digest detects mutation, not forgery.** `policy::decision_digest` is an unkeyed hash over public canonical bytes, so re-deriving it proves a decision was not altered after the resolver produced it. It does not authenticate the resolver, which is trusted by injection.
+13. **No cursor.** `deferred_keys` names what did not fit but there is no resumable cursor, because `MemoryQuery` has no `after_key`. Adding one is a core change and separately gated.

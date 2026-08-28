@@ -73,6 +73,13 @@ pub enum CapabilityV1 {
     EvaluationValidate,
     EvaluationEvaluate,
     EvaluationGet,
+    ObservabilityTelemetryQuery,
+    ObservabilityTelemetryStatus,
+    MemoryRemember,
+    MemoryRecall,
+    MemorySearch,
+    MemoryForget,
+    MemoryStatus,
 }
 impl CapabilityV1 {
     #[must_use]
@@ -91,6 +98,13 @@ impl CapabilityV1 {
             Self::EvaluationValidate => "evaluation_validate",
             Self::EvaluationEvaluate => "evaluation_evaluate",
             Self::EvaluationGet => "evaluation_get",
+            Self::ObservabilityTelemetryQuery => "observability_telemetry_query",
+            Self::ObservabilityTelemetryStatus => "observability_telemetry_status",
+            Self::MemoryRemember => "memory_remember",
+            Self::MemoryRecall => "memory_recall",
+            Self::MemorySearch => "memory_search",
+            Self::MemoryForget => "memory_forget",
+            Self::MemoryStatus => "memory_status",
         }
     }
 }
@@ -540,6 +554,82 @@ mod tests {
         assert_ne!(
             original,
             decision_digest(&request, &changed_grant).expect("digest")
+        );
+    }
+
+    #[test]
+    fn observability_capability_wire_names_and_digests_are_bound() {
+        assert_eq!(
+            CapabilityV1::ObservabilityTelemetryQuery.as_str(),
+            "observability_telemetry_query"
+        );
+        assert_eq!(
+            CapabilityV1::ObservabilityTelemetryStatus.as_str(),
+            "observability_telemetry_status"
+        );
+
+        let mut query_request = request();
+        query_request.capability = CapabilityV1::ObservabilityTelemetryQuery;
+        let query_decision = allow_decision(&query_request, &grant()).expect("query allow");
+        let query_bytes = String::from_utf8(
+            decision_canonical_bytes(&query_request, &query_decision).expect("query bytes"),
+        )
+        .expect("utf8");
+        assert!(query_bytes.contains("29:observability_telemetry_query\n"));
+
+        let mut status_request = query_request.clone();
+        status_request.capability = CapabilityV1::ObservabilityTelemetryStatus;
+        let status_decision = allow_decision(&status_request, &grant()).expect("status allow");
+        let status_bytes = String::from_utf8(
+            decision_canonical_bytes(&status_request, &status_decision).expect("status bytes"),
+        )
+        .expect("utf8");
+        assert!(status_bytes.contains("30:observability_telemetry_status\n"));
+        assert_ne!(
+            decision_digest(&query_request, &query_decision).expect("query digest"),
+            decision_digest(&status_request, &status_decision).expect("status digest"),
+            "the capability wire name must be bound into decision evidence"
+        );
+    }
+
+    #[test]
+    fn memory_capability_wire_names_and_digests_are_bound() {
+        // These names are bound into the decision digest, so they are permanent
+        // wire contracts rather than internal identifiers.
+        for (capability, name) in [
+            (CapabilityV1::MemoryRemember, "memory_remember"),
+            (CapabilityV1::MemoryRecall, "memory_recall"),
+            (CapabilityV1::MemorySearch, "memory_search"),
+            (CapabilityV1::MemoryForget, "memory_forget"),
+            (CapabilityV1::MemoryStatus, "memory_status"),
+        ] {
+            assert_eq!(capability.as_str(), name);
+            let mut request = request();
+            request.capability = capability;
+            let decision = allow_decision(&request, &grant()).expect("allow");
+            let bytes =
+                String::from_utf8(decision_canonical_bytes(&request, &decision).expect("bytes"))
+                    .expect("utf8");
+            assert!(
+                bytes.contains(&format!("{}:{name}\n", name.len())),
+                "the capability wire name must be length-prefixed into evidence"
+            );
+        }
+
+        // Two memory capabilities must not share a digest, or a grant for one
+        // would be replayable as a grant for another.
+        let mut remember = request();
+        remember.capability = CapabilityV1::MemoryRemember;
+        let mut forget = request();
+        forget.capability = CapabilityV1::MemoryForget;
+        assert_ne!(
+            decision_digest(
+                &remember,
+                &allow_decision(&remember, &grant()).expect("allow")
+            )
+            .expect("digest"),
+            decision_digest(&forget, &allow_decision(&forget, &grant()).expect("allow"))
+                .expect("digest"),
         );
     }
 

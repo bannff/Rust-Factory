@@ -9,6 +9,7 @@ No framework belongs in every brick. Cores use typed Rust models, explicit valid
 | External schemas/MCP | schemars, rmcp | discovery/shape documentation at MCP adapters only; schema success is not domain validation or authorization |
 | Declarative selection | serde, schemars | `settings` module only; owns configuration shape, never the configuration source or the selection-to-constructor `match` |
 | Agent memory backend | agentic-memory `=0.4.2` | `memory`'s `agentic` module only, `default-features = false`; no vendor type in a public signature. See [memory](../memory/requirements.md) section 7 |
+| Operational log telemetry | opentelemetry `=0.32.0` | `observability`'s `opentelemetry` module only, `default-features = false`, `logs` API only; SDK/exporter/network/runtime/flush/shutdown remain composition-binary responsibilities. See [observability](../observability/requirements.md) section 7 |
 | Filesystem confinement | cap-std | filesystem adapter only |
 | Stable library errors | thiserror candidate | only if repeated error boilerplate justifies it |
 | Operational context | anyhow | binaries/adapters only, never public core errors |

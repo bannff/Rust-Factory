@@ -19,6 +19,7 @@ pub enum PublicErrorCode {
     LimitExceeded,
     NotFound,
     TenantMismatch,
+    Unauthorized,
     AdapterFailure,
 }
 
@@ -33,6 +34,7 @@ impl PublicErrorCode {
             Self::LimitExceeded => "limit_exceeded",
             Self::NotFound => "not_found",
             Self::TenantMismatch => "tenant_mismatch",
+            Self::Unauthorized => "unauthorized",
             Self::AdapterFailure => "adapter_failure",
         }
     }
@@ -74,6 +76,27 @@ pub enum MemoryError {
     /// reported. This variant is the vocabulary for an adapter whose backend
     /// cannot partition and must compare tenants explicitly.
     TenantMismatch,
+    /// The caller is not permitted to perform the operation.
+    ///
+    /// Not produced by the core today, which performs no authorization.
+    ///
+    /// It lives here rather than in the adapter for two reasons. First, this
+    /// crate's [`PublicErrorCode`] is its single wire vocabulary and
+    /// `public_code` its single projection point; an adapter-local error enum
+    /// would give one crate two taxonomies over the same operations. Second, a
+    /// `MemoryStore` fronting a remote or access-controlled backend is a concrete
+    /// future producer — unlike a control-plane concern that could never arise
+    /// below the port.
+    ///
+    /// It is a distinct variant, not folded into [`Self::AdapterFailure`], because
+    /// a caller must be able to tell a **permanent** refusal from a **transient**
+    /// fault. Collapsing them makes an agent retry-loop forever on a capability it
+    /// will never hold.
+    ///
+    /// It deliberately carries no reason. Denied, not-enabled, and a tampered
+    /// decision are indistinguishable, so the variant cannot be used to probe
+    /// which capabilities exist.
+    Unauthorized,
     /// The backend failed for a reason the caller cannot act on.
     AdapterFailure,
 }
@@ -91,6 +114,7 @@ impl MemoryError {
             Self::InvalidQuery => PublicErrorCode::InvalidQuery,
             Self::LimitExceeded => PublicErrorCode::LimitExceeded,
             Self::NotFound | Self::TenantMismatch => PublicErrorCode::NotFound,
+            Self::Unauthorized => PublicErrorCode::Unauthorized,
             Self::AdapterFailure => PublicErrorCode::AdapterFailure,
         }
     }

@@ -62,7 +62,7 @@ DEFERRED_FAMILIES = {
 }
 
 # Active families whose only package is still a status-only core tree.
-STATUS_ONLY_FAMILIES = frozenset({"model-gateway", "sandbox", "observability"})
+STATUS_ONLY_FAMILIES = frozenset({"model-gateway", "sandbox"})
 
 # Registry rows carrying this taxonomy describe a capability family. Every
 # other taxonomy is adapter infrastructure, a composition base, or an optional
@@ -123,6 +123,7 @@ ADAPTER_MODULES = {
     "anyhow": frozenset({"mcp"}),
     "cap_std": frozenset({"fs"}),
     "agentic_memory": frozenset({"agentic"}),
+    "opentelemetry": frozenset({"opentelemetry"}),
 }
 
 # Every module name a brick may feature gate. A superset of ADAPTER_MODULES'
@@ -139,7 +140,7 @@ ADAPTER_MODULES = {
 # still listed here, because otherwise the validator would classify it as a core
 # module and the "a core module names no adapter" rule would stop applying to it.
 ADAPTER_MODULE_NAMES = frozenset(
-    {"mcp", "memory", "fs", "agentic", "local", "settings"}
+    {"mcp", "memory", "fs", "agentic", "local", "settings", "opentelemetry"}
 )
 VALID_STATUSES = {
     "scaffolded",

@@ -5,7 +5,7 @@
 # cores. The -features targets below are what cover the adapter code; without
 # them roughly half the workspace would go uncompiled, unlinted, and untested.
 
-BRICKS := agent evaluation memory policy project workflow
+BRICKS := agent evaluation memory observability policy project workflow
 
 fmt:
 	cargo fmt --all
@@ -26,7 +26,12 @@ lint-features:
 	cargo clippy -p memory --features local --all-targets -- -D warnings
 	cargo clippy -p memory --features agentic --all-targets -- -D warnings
 	cargo clippy -p memory --features settings --all-targets -- -D warnings
+	cargo clippy -p memory --features mcp --all-targets -- -D warnings
 	cargo clippy -p memory --features agentic,local --all-targets -- -D warnings
+	cargo clippy -p observability --features local --all-targets -- -D warnings
+	cargo clippy -p observability --features settings --all-targets -- -D warnings
+	cargo clippy -p observability --features opentelemetry --all-targets -- -D warnings
+	cargo clippy -p observability --features mcp --all-targets -- -D warnings
 	cargo clippy -p policy --features memory --all-targets -- -D warnings
 	cargo clippy -p project --features fs --all-targets -- -D warnings
 	cargo clippy -p project --features mcp --all-targets -- -D warnings
@@ -44,6 +49,13 @@ test-features:
 	cargo test -p memory --features settings
 	cargo test -p memory --features agentic,local
 	cargo test -p memory --features agentic,local,settings
+	cargo test -p memory --features mcp
+	cargo test -p memory --features mcp,local
+	cargo test -p observability --features local
+	cargo test -p observability --features settings
+	cargo test -p observability --features opentelemetry
+	cargo test -p observability --features mcp
+	cargo test -p observability --all-features
 	cargo test -p policy --features memory
 	cargo test -p project --features mcp,fs
 	cargo test -p project --features mcp
@@ -62,7 +74,7 @@ test-features:
 # graph in isolation, so it says nothing about artifacts: Cargo unifies features
 # per build graph, so a binary composing several bricks with `mcp` enabled links
 # one framework-carrying build of each.
-ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory
+ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory opentelemetry
 
 isolation-check:
 	@for dep in $(ADAPTER_DEPS); do \

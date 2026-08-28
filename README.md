@@ -16,8 +16,9 @@ schema, error-framework, filesystem, or async-runtime dependency.
 | `crates/evaluation` | `mcp`, `memory` | Immutable evaluation contracts over terminal workflow evidence. |
 | `crates/project` | `mcp`, `fs` | Blueprint validation, generation planning, and root-confined materialization. |
 | `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. No MCP surface, by design. |
-| `crates/memory` | `local`, `agentic`, `settings` | Tenant-scoped agent memory behind one framework-agnostic port. Two selectable backends; no durable adapter and no MCP surface yet. |
-| `crates/{model-gateway,sandbox,observability}` | — | Status-only scaffolds for the families the autonomous loop drives next; their provisional ports still live in `agent`. |
+| `crates/memory` | `local`, `agentic`, `settings`, `mcp` | Tenant-scoped agent memory behind one framework-agnostic port. Two selectable backends and a five-tool agent surface; no durable adapter. |
+| `crates/observability` | `local`, `opentelemetry`, `settings`, `mcp` | Bounded tenant-scoped operational logs with an evicting process-local reader, metadata-only OpenTelemetry API submission, and Policy-gated inspection; no durable audit/evidence guarantee. |
+| `crates/{model-gateway,sandbox}` | — | Status-only scaffolds for the families the autonomous loop drives next; their provisional ports still live in `agent`. |
 | `crates/mcp-transport` | — | Shared bounded MCP stdio transport. Owns no capability. |
 
 A `memory`, `local`, or `fs` module is a deterministic process-local adapter: no

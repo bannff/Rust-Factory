@@ -41,6 +41,15 @@ pub const MAX_QUERY_LIMIT: u32 = 256;
 /// honest claim is per-tenant containment: one tenant cannot exhaust the host on
 /// its own, and cannot grow without limit. A deployment admitting unbounded
 /// tenants needs its own admission control, which is not this brick's concern.
+///
+/// The budget is **shared by every principal in a tenant.** There is no
+/// per-principal quota: one principal can consume a tenant's whole allowance, and
+/// every other principal in that tenant is then refused any new key until
+/// something is deleted. Replacing an existing key still works, so a full
+/// partition is never unrepairable. A deployment needing fairness between
+/// principals must issue them distinct tenants or add its own admission adapter;
+/// a per-principal quota would change the isolation model and needs its own
+/// specification.
 pub const MAX_PARTITION_RECORDS: usize = 4_096;
 
 /// Maximum distinct namespaces one tenant may occupy.

@@ -1,10 +1,8 @@
 //! The deterministic in-process adapter and a system clock.
 //!
-//! Not feature-gated: it depends only on the standard library, so it costs the
-//! default build nothing and gives the default in-process backend an
-//! implementation in every build. Without it a composition root could select a
-//! backend that no compiled adapter provides, which is a startup failure the
-//! brick can trivially avoid.
+//! Feature-gated behind `local` even though it depends only on the standard
+//! library, so adapter placement and opt-in composition remain mechanically
+//! enforced like every other adapter.
 //!
 //! This adapter is also the reference behaviour for the port contract: it is the
 //! simplest thing that honours every clause, so a disagreement between it and

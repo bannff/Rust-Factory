@@ -14,6 +14,7 @@
 //! | `local` | `local` | nothing beyond `std` |
 //! | `agentic` | `agentic` | `agentic-memory`'s cognitive graph |
 //! | `settings` | `settings` | `serde` and `schemars` for declarative selection |
+//! | `mcp` | `mcp` | `rmcp` for the bounded agent-facing control surface |
 //!
 //! # Selecting a backend
 //!
@@ -25,9 +26,10 @@
 //!
 //! # Boundary discipline
 //!
-//! `serde` and `schemars` appear only in `settings`. A boundary DTO converts into
-//! a [`model`] type and is never used as a domain type itself, because shape and
-//! validity are separate concerns and decoding proves only the first.
+//! `serde` and `schemars` appear only in the feature-gated `settings` and
+//! `mcp` adapter modules. Their DTOs convert into [`model`] types and are never
+//! domain types themselves, because shape and validity are separate concerns
+//! and decoding proves only the first.
 //!
 //! Identifiers ([`TenantId`], [`Namespace`], [`RecordKey`], [`RunId`]) do wrap a
 //! private field behind a fallible constructor, so an invalid one cannot exist.
@@ -47,6 +49,8 @@ pub mod validation;
 pub mod agentic;
 #[cfg(feature = "local")]
 pub mod local;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 #[cfg(feature = "settings")]
 pub mod settings;
 
