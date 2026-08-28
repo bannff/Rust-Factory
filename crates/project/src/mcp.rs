@@ -3,7 +3,9 @@
 //! Enabled by the `mcp` feature. Owns transport DTOs, generated schemas, and
 //! safe response projection — never process lifecycle.
 
+#![allow(unknown_lints)]
 #![allow(clippy::module_name_repetitions)]
+#![allow(clippy::unused_async_trait_impl)]
 
 use std::error::Error;
 

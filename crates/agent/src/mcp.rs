@@ -4,9 +4,11 @@
 //! schemas, the policy gate, and safe response projection. It owns no process
 //! lifecycle: a composition binary under `projects/` binds the transport.
 
+#![allow(unknown_lints)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::module_name_repetitions)]
+#![allow(clippy::unused_async_trait_impl)]
 
 use crate::{
     AgentDefinitionV1, AgentId, AgentRegistry, CommunicationPolicy, DefinitionError,
