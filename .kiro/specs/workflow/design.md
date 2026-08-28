@@ -3,16 +3,16 @@
 ## Architecture
 
 ```text
-workflow-core
+workflow
   WorkflowDefinition / Run / Attempt / Event / RequestContext
   WorkflowStore + AgentInvoker traits
                    ↑
-workflow-memory   deterministic in-memory store and static agent invoker
+workflow::memory   deterministic in-memory store and static agent invoker
                    ↑
-workflow-mcp      validate / start / get / list / cancel
+workflow::mcp      validate / start / get / list / cancel
 ```
 
-The core owns durable lifecycle semantics but no storage, agent, provider, or MCP framework types. `workflow-memory` implements the first deterministic store. `workflow-mcp` receives a store and invoker through dependency injection. Dependencies flow inward.
+The core owns durable lifecycle semantics but no storage, agent, provider, or MCP framework types. `workflow::memory` implements the first deterministic store. `workflow::mcp` receives a store and invoker through dependency injection. Dependencies flow inward.
 
 ## Model
 
@@ -44,7 +44,7 @@ Evaluation reads terminal Workflow evidence through a separate read port and emi
 
 ## Durable transition contract
 
-`WorkflowDefinitionCatalog` resolves immutable definitions; `AgentInvoker` validates the referenced `agent_core::AgentId`. An injected authenticated `RequestContextResolver` derives tenant/principal context at MCP ingress.
+`WorkflowDefinitionCatalog` resolves immutable definitions; `AgentInvoker` validates the referenced `agent::AgentId`. An injected authenticated `RequestContextResolver` derives tenant/principal context at MCP ingress.
 
 `WorkflowStore::transition(expected_revision, expected_status, mutation)` is the only mutation primitive. One successful transition atomically publishes the next snapshot, continuous attempt mutation, strictly appended ordered events/evidence, and a status-compatible terminal reason; invalid mutations publish nothing. Cancellation supplies a signal to the invoker and transitions an active locally registered run to terminal `cancelled`; late completion cannot publish a competing success/failure transition.
 

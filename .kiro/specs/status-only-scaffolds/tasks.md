@@ -2,8 +2,13 @@
 
 GitHub issue: #9
 
+> **Superseded in part by [Issue #11](https://github.com/bannff/Rust-Factory/issues/11).**
+> These tasks were completed as written. The 13-package inventory was then
+> reduced to 4 and the validator generalized; see the note in
+> [requirements.md](requirements.md).
+
 - [x] Rust-SME approve the exact scaffold package inventory, zero-dependency status-only constraints, and validator boundary.
-- [x] Add the 13 status-only core workspace packages with the mandatory paths and authoritative Cargo metadata.
+- [x] Add the 13 status-only core workspace packages with the mandatory paths and authoritative Cargo metadata. *(Reduced to 4 under #11.)*
 - [x] Add deterministic validator coverage for metadata, paths, dependency prohibition, source/target restrictions, lint inheritance, and Vision-registry alignment.
 - [x] Wire the validator into the existing local quality path without provisioning dependencies or changing existing package behavior.
 - [x] Run targeted scaffold validation, QA, security, final architecture/Rust-SME, and `make check`.

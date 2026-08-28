@@ -3,7 +3,7 @@
 Each new crate is a deterministic, compile-safe declaration that a capability family exists in the Factory portfolio and has reserved responsibility paths for agent maintenance. It is not a contract implementation.
 
 ```text
-crates/cache-core/
+crates/cache/
   Cargo.toml
   src/lib.rs
   src/{model,validation,error,port,service}.rs

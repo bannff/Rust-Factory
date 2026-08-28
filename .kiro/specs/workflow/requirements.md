@@ -6,9 +6,9 @@ Provide the durable, domain-agnostic lifecycle around one bounded Agent invocati
 
 ## First vertical slice
 
-1. The slice SHALL provide `workflow-core`, `workflow-memory`, and `workflow-mcp` bricks.
+1. The slice SHALL provide `workflow`, `workflow::memory`, and `workflow::mcp` bricks.
 2. It SHALL support one immutable, versioned single-step workflow definition whose only step is a named Agent invocation.
-3. `workflow-core` SHALL own typed workflow definitions, request context, runs, attempts, append-only events, statuses, terminal reasons, budgets, errors, and core-owned ports.
+3. `workflow` SHALL own typed workflow definitions, request context, runs, attempts, append-only events, statuses, terminal reasons, budgets, errors, and core-owned ports.
 4. A `WorkflowStore` port SHALL atomically create-or-return a run by `(tenant_id, workflow_id, workflow_version, run_key, input_digest)` and perform compare-and-set updates by revision.
 5. `workflow_start` SHALL require a tenant/principal context and nonempty idempotency `run_key`. A conflicting reuse of a key SHALL fail without running the Agent.
 6. An injected `AgentInvoker` SHALL execute one resolved Agent attempt. Workflow SHALL persist the invocation's capability-scope digest, normalized events, result/error, and terminal reason as evidence.
@@ -30,7 +30,7 @@ Test idempotent duplicate start, key conflict, CAS/terminal race behavior, cance
 ## Durable-semantics refinements
 
 1. MCP SHALL derive `RequestContext { tenant_id, principal_id }` from an injected authenticated-session resolver. Caller input SHALL not assert tenant or principal identity.
-2. `workflow_validate` SHALL resolve trusted request context and authorize workflow-validation policy before it probes referenced Agent availability. `WorkflowDefinitionCatalog` SHALL resolve immutable `(workflow_id, version)` definitions; `AgentInvoker` SHALL validate the referenced `agent_core::AgentId` before start.
+2. `workflow_validate` SHALL resolve trusted request context and authorize workflow-validation policy before it probes referenced Agent availability. `WorkflowDefinitionCatalog` SHALL resolve immutable `(workflow_id, version)` definitions; `AgentInvoker` SHALL validate the referenced `agent::AgentId` before start.
 3. `WorkflowStore::transition` SHALL atomically commit the expected revision/status check, next run state, attempt mutation, ordered events/evidence, and terminal reason. A conflict returns a typed result without partial publication.
 4. This first in-memory synchronous slice supports cancellation only while the local runner has an active cancellation signal registered for the run. `workflow_cancel` SHALL return `conflict` when that local acknowledgement is unavailable; it does not promise durable, cross-process cancellation. Invocation receives that signal, a deadline, and a stable downstream idempotency key derived from tenant, run, and attempt identity. A late completion SHALL never change a terminal state. Durable cancellation leases, recovery, and cross-process acknowledgement are deferred.
 5. The exact start identity is `(tenant_id, workflow_id, workflow_version, run_key, sha256(canonical_input))`. Canonical input is a bounded UTF-8 JSON value with object keys recursively sorted, no duplicate keys, and a 64 KiB ceiling. Run, tenant, principal, request, and correlation identifiers use the existing stable logical-ID grammar.

@@ -5,16 +5,16 @@ host session adapter → TrustedContextV1
                          ↓
               PolicyResolver::authorize(capability)
                          ↓ verified Allow
- evaluation-mcp compatibility adapter → tenant ID → evaluation-core ports
+ evaluation::mcp compatibility adapter → tenant ID → evaluation ports
                                                 ├─ WorkflowEvidenceReader (read-only)
                                                 └─ EvaluationStore (immutable create-or-match)
 ```
 
-`EvaluationPolicyContextResolver<T, P>` belongs to `evaluation-mcp`. It owns `TrustedContextSource` and `PolicyResolver`, resolves trusted context exactly once, authorizes one closed Evaluation capability, canonicalizes the effective grant, recomputes the request-bound Allow digest, and returns only the trusted tenant ID needed by Evaluation’s existing tenant-first core ports. Its resolved context and decision values are private implementation details; `EvaluationMcp::new` accepts the verified resolver directly, preventing a caller from minting an authorized tenant context.
+`EvaluationPolicyContextResolver<T, P>` belongs to `evaluation::mcp`. It owns `TrustedContextSource` and `PolicyResolver`, resolves trusted context exactly once, authorizes one closed Evaluation capability, canonicalizes the effective grant, recomputes the request-bound Allow digest, and returns only the trusted tenant ID needed by Evaluation’s existing tenant-first core ports. Its resolved context and decision values are private implementation details; `EvaluationMcp::new` accepts the verified resolver directly, preventing a caller from minting an authorized tenant context.
 
 Handlers first run existing bounded request serialization and semantic validation. `evaluation_validate` converts and validates `EvaluationDefinitionV1`; `evaluation_evaluate_run` validates its whole bounded request and definition; `evaluation_get_result` validates its whole bounded logical key. Only then may they call the resolver. Source, conversion, canonicalization, or digest verification failure maps to `operation_failed`; deny maps to `not_found`; none may reach the reader/store. An allowed handler follows the existing core path unchanged.
 
-Evaluation does not use a Policy grant as a capability ceiling: it performs no runtime effect. Its canonical result hash excludes request-specific authorization data. This migration therefore changes only the MCP adapter boundary, not Evaluation core, immutable records, or `evaluation-memory`.
+Evaluation does not use a Policy grant as a capability ceiling: it performs no runtime effect. Its canonical result hash excludes request-specific authorization data. This migration therefore changes only the MCP adapter boundary, not Evaluation core, immutable records, or `evaluation::memory`.
 
 ## Bounded stdio transport
 

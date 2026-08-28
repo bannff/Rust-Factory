@@ -1,0 +1,36 @@
+[package]
+name = "workflow"
+description = "Transport-independent durable lifecycle contracts for one bounded agent invocation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[package.metadata.rust-factory]
+family = "workflow"
+role = "brick"
+status = "implemented"
+
+# No feature is enabled by default: the default build is the framework-free
+# capability, and every adapter is opt-in.
+[features]
+mcp = ["dep:anyhow", "dep:policy", "dep:rmcp", "dep:schemars", "dep:serde"]
+memory = []
+
+[dependencies]
+agent = { path = "../agent", version = "=0.1.0" }
+serde_json.workspace = true
+sha2.workspace = true
+
+anyhow = { workspace = true, optional = true }
+policy = { path = "../policy", version = "=0.1.0", optional = true }
+rmcp = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

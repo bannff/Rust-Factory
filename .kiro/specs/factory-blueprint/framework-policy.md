@@ -7,6 +7,9 @@ No framework belongs in every brick. Cores use typed Rust models, explicit valid
 | Semantic canonical input | serde_json exception | permitted in core only for specified canonical semantic input; no serde boundary types in public API |
 | Serialization/ingress | serde, serde_json | closed adapter DTOs (`deny_unknown_fields` unless an extension map is specified), private conversion, and explicit raw/semantic bounds |
 | External schemas/MCP | schemars, rmcp | discovery/shape documentation at MCP adapters only; schema success is not domain validation or authorization |
+| Declarative selection | serde, schemars | `settings` module only; owns configuration shape, never the configuration source or the selection-to-constructor `match` |
+| Agent memory backend | agentic-memory `=0.4.2` | `memory`'s `agentic` module only, `default-features = false`; no vendor type in a public signature. See [memory](../memory/requirements.md) section 7 |
+| Operational log telemetry | opentelemetry `=0.32.0` | `observability`'s `opentelemetry` module only, `default-features = false`, `logs` API only; SDK/exporter/network/runtime/flush/shutdown remain composition-binary responsibilities. See [observability](../observability/requirements.md) section 7 |
 | Filesystem confinement | cap-std | filesystem adapter only |
 | Stable library errors | thiserror candidate | only if repeated error boilerplate justifies it |
 | Operational context | anyhow | binaries/adapters only, never public core errors |
@@ -20,7 +23,7 @@ Cargo features default to minimal core behavior. Optional provider/persistence/m
 
 ## Transport and composition boundaries
 
-`mcp-transport` is an adapter-only crate when repeated bounded framing behavior has at least two consumers. It may contain rmcp, Tokio, futures, and codec dependencies; cores may not. `<brick>-server` binaries are composition roots and own runtime lifecycle, transport binding, configuration, host-derived trusted context, Policy construction, concrete adapter selection, logging initialization, and shutdown. `<brick>-mcp` remains a reusable bounded adapter library: for new or refactored bricks it must accept an injected transport/service lifecycle and must not read stdio, construct `BoundedStdioTransport`, or choose Tokio process lifecycle. The existing Agent, Project, Workflow, and Evaluation MCP libraries already use the shared bounded transport but retain `serve_stdio()` lifecycle ownership until separately gated behavior-preserving server migrations complete. Internal execution remains typed Rust port calls; remote client adapters and async-port migrations require separate demonstrated-need specifications.
+`mcp-transport` is an adapter-only crate when repeated bounded framing behavior has at least two consumers. It may contain rmcp, Tokio, futures, and codec dependencies; cores may not. Binaries under `projects/` are composition roots and own runtime lifecycle, transport binding, configuration, host-derived trusted context, Policy construction, concrete adapter selection, logging initialization, and shutdown. A brick's `mcp` module is a reusable bounded adapter: it accepts an injected transport/service lifecycle and must not read stdio, construct `BoundedStdioTransport`, or choose Tokio process lifecycle. That migration is complete — `serve_stdio` has been deleted from every brick, so no library owns process lifecycle and no brick declares a direct `tokio` dependency. Internal execution remains typed Rust port calls; remote client adapters and async-port migrations require separate demonstrated-need specifications.
 
 ## Portfolio selection and experiments
 

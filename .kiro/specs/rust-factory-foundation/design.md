@@ -14,9 +14,9 @@ project core ──> ValidationReport + GenerationPlan
       │                              └── filesystem adapter: safe materialization
 ```
 
-- `crates/project-core` — blueprint, validation, planning, and writer-port contracts.
-- `crates/project-fs` — root-confined filesystem materialization.
-- `crates/project-mcp` — bounded MCP adapter using the official `rmcp` SDK.
+- `crates/project` — blueprint, validation, planning, and writer-port contracts.
+- `crates/project::fs` — root-confined filesystem materialization.
+- `crates/project::mcp` — bounded MCP adapter using the official `rmcp` SDK.
 
 The project core owns domain models, validation, template selection, and deterministic file content. The MCP and filesystem adapters depend on the core and own protocol, serialization, configured paths, and I/O. Dependencies always flow inward.
 

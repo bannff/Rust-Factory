@@ -4,7 +4,7 @@
 
 ```text
 capability family
-  <brick>-core          stable domain contract; required only when independently owned
+  <brick>          stable domain contract; required only when independently owned
   <brick>-memory        optional deterministic local stateful adapter
   <brick>-<vendor>      optional one-provider / one-integration adapter
   <brick>-mcp           optional bounded control-plane adapter library
@@ -27,10 +27,10 @@ core                                   ──>  another capability only through 
 
 ## Mandatory scaffold package shape
 
-Every approved capability family receives this agent-maintainable status-only core tree before it owns real behavior. It is intentionally uniform so agents can enumerate and fill the same responsibility paths deterministically.
+A capability family that is committed but not yet designed may use this agent-maintainable status-only core tree as a bounded intermediate step. It is intentionally uniform so agents can enumerate and fill the same responsibility paths deterministically. A family with no demonstrated consumer receives no package at all — it stays a registry row naming its future crate.
 
 ```text
-crates/<brick>-core/
+crates/<brick>/
   Cargo.toml                       # package.metadata.rust-factory record
   src/
     lib.rs                          # crate-level status and private modules
@@ -47,19 +47,19 @@ A status-only tree has only documentation/comments, compiles, has zero non-stdli
 
 ```toml
 [package.metadata.rust-factory]
-family = "cache"
+family = "sandbox"
 role = "core"
 status = "scaffolded"
 ```
 
-The closed package-status set is `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Crate-level documentation mirrors those fields; the Vision table remains the family-level registry. A metadata/layout validator must reject unknown roles/statuses, a missing required path, invalid role-family combinations, forbidden status-only dependencies, and disagreement with the family registry.
+The closed role set is `core`, `memory`, `adapter`, `vendor`, `mcp`, `server`, `mesh`, `infrastructure`, and `test-support`. The closed package-status set is `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Crate-level documentation mirrors those fields; the Vision registry remains the family-level source of truth. `scripts/validate_brick_registry.py` enforces this for every package: it rejects a missing or malformed metadata record, unknown or unregistered families, unknown roles/statuses, a missing or extra status-only path, non-comment status-only source, forbidden status-only dependencies and target/feature configuration, canonical scaffold path mismatches, binary targets under `crates/`, `role = "server"` disagreeing with residence under `projects/`, unlisted or phantom workspace members, package directories without a manifest, and registry disagreement in either direction.
 
 ## Mature role shape
 
 A mature capability family may contain only the roles its approved semantics justify:
 
 ```text
-<brick>-core          typed models, validation, errors, ports, service
+<brick>          typed models, validation, errors, ports, service
 <brick>-memory        process-local adapter for a concrete core-owned stateful port
 <brick>-<vendor>      one integration implementing an existing core-owned port
 <brick>-mcp           bounded DTO/convert/service library, never process stdio lifecycle
@@ -88,9 +88,9 @@ untrusted transport
 
 ## Existing migration
 
-The immediate structural correction is MCP lifecycle ownership. Current `agent-mcp`, `project-mcp`, `workflow-mcp`, and `evaluation-mcp` expose `serve_stdio()` and construct bounded stdio transports. The standard moves that code into corresponding `*-server` binaries. MCP crates retain tool DTOs, routing, safe projections, and a public transport-agnostic service entry point; server crates own `BoundedStdioTransport` construction and `serve(...).waiting()` lifecycle. This must be behavior-preserving and remain separately design-gated before code changes.
+MCP lifecycle ownership is corrected: the `serve_stdio()` helpers that constructed bounded stdio transports have been deleted from all four `mcp` modules. Those modules retain tool DTOs, routing, safe projections, and a transport-agnostic service entry point; a `role = "server"` binary under `projects/` owns `BoundedStdioTransport` construction and the `serve(...).waiting()` lifecycle. No such binary exists yet, so the transport currently has no production caller (#17).
 
-The next normalization wave closes Project MCP object DTO schemas, makes raw/semantic/egress limits explicit per MCP operation, inventories whether canonical JSON is Workflow domain identity or adapter wire handling, and moves stateful Agent local adapters out of `agent-core` only if the extraction is proven behavior-preserving and improves the established taxonomy.
+The next normalization wave closes Project MCP object DTO schemas, makes raw/semantic/egress limits explicit per MCP operation, inventories whether canonical JSON is Workflow domain identity or adapter wire handling, and moves stateful Agent local adapters out of `agent` only if the extraction is proven behavior-preserving and improves the established taxonomy.
 
 ## Verification
 

@@ -1,6 +1,6 @@
 # Policy Test Strategy
 
-Narrow command: `cargo test -p policy-core -p policy-memory` (plus `-p policy-mcp` only if created).
+Narrow command: `cargo test -p policy --features memory`. There is no MCP surface to test, by design.
 
 Required: ID/context validation; default deny; tenant/principal separation; closed capability validation; duplicate grant canonicalization; decision digest golden vectors; grant intersection cannot elevate Agent scope; resolver failure deny; safe deny/not-found projections.
 

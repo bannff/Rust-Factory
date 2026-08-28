@@ -6,9 +6,9 @@ Establish a small, idiomatic Rust foundation that proves the Factory's central p
 
 ## Functional requirements
 
-1. The workspace SHALL use narrowly named, framework- and transport-independent capability cores. A new shared core is created only for a demonstrated stable contract with at least two consumers; `project-core` owns the first brick's stable domain contracts.
+1. The workspace SHALL use narrowly named, framework- and transport-independent capability cores. A new shared core is created only for a demonstrated stable contract with at least two consumers; `project` owns the first brick's stable domain contracts.
 2. The first vertical slice SHALL be a project brick that validates a declarative Rust project blueprint, produces a deterministic scaffold plan, and generates the planned workspace through a filesystem adapter.
-3. `project-core` SHALL expose typed contracts for blueprints, validation findings, generated files, generation plans, project targets, materialization, and errors. It SHALL contain no MCP, filesystem, or framework types.
+3. `project` SHALL expose typed contracts for blueprints, validation findings, generated files, generation plans, project targets, materialization, and errors. It SHALL contain no MCP, filesystem, or framework types.
 4. The generation plan SHALL be deterministic for the same valid blueprint and Factory version.
 5. The filesystem adapter SHALL hold an opened, capability-confined target-root directory; it SHALL atomically reserve a one-component target, reject traversal, and refuse overwrite by default.
 6. The project brick SHALL expose bounded MCP operations to validate a blueprint, inspect a dry-run plan, generate a workspace, and report validation results without exposing host filesystem paths or raw I/O errors.

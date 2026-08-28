@@ -1,32 +1,15 @@
 [workspace]
 members = [
-    "crates/policy-core",
-    "crates/policy-memory",
+    "crates/policy",
     "crates/mcp-transport",
-    "crates/agent-core",
-    "crates/agent-mcp",
-    "crates/project-core",
-    "crates/project-fs",
-    "crates/project-mcp",
-    "crates/workflow-core",
-    "crates/workflow-memory",
-    "crates/workflow-mcp",
-    "crates/evaluation-core",
-    "crates/evaluation-memory",
-    "crates/evaluation-mcp",
-    "crates/workspace-governance-core",
-    "crates/identity-core",
-    "crates/model-gateway-core",
-    "crates/memory-core",
-    "crates/knowledge-core",
-    "crates/tool-execution-core",
-    "crates/sandbox-core",
-    "crates/verification-core",
-    "crates/message-bus-core",
-    "crates/cache-core",
-    "crates/graph-core",
-    "crates/observability-core",
-    "crates/notification-core",
+    "crates/agent",
+    "crates/project",
+    "crates/workflow",
+    "crates/evaluation",
+    "crates/model-gateway",
+    "crates/memory",
+    "crates/sandbox",
+    "crates/observability",
 ]
 resolver = "3"
 
@@ -39,8 +22,10 @@ authors = ["Rust Factory contributors"]
 repository = "https://example.invalid/rust-factory"
 
 [workspace.dependencies]
+agentic-memory = { version = "=0.4.2", default-features = false }
 anyhow = "=1.0.100"
 cap-std = "=4.0.3"
+opentelemetry = { version = "=0.32.0", default-features = false, features = ["logs"] }
 rmcp = { version = "=3.1.4", features = ["macros", "server", "transport-io"] }
 proptest = "=1.6.0"
 schemars = "=1.2.2"

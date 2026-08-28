@@ -1,0 +1,31 @@
+[package]
+name = "project"
+description = "Deterministic Rust workspace blueprint validation and planning."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[package.metadata.rust-factory]
+family = "project"
+role = "brick"
+status = "implemented"
+
+# No feature is enabled by default: the default build is the framework-free
+# capability, and every adapter is opt-in. The mcp module deliberately does not
+# depend on fs, so `--features mcp` alone is a valid build.
+[features]
+fs = ["dep:cap-std"]
+mcp = ["dep:anyhow", "dep:rmcp", "dep:schemars", "dep:serde", "dep:serde_json"]
+
+[dependencies]
+anyhow = { workspace = true, optional = true }
+cap-std = { workspace = true, optional = true }
+rmcp = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[lints]
+workspace = true
