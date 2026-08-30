@@ -35,7 +35,7 @@ A consuming core calls another capability through the consumed capability's type
 ## Three planes
 
 1. **Authoring plane — MCP.** Agents discover bricks and use bounded tools to create projects, configure agents, retrieve steering/skills/knowledge, operate workflows, and inspect evaluation evidence.
-2. **Execution plane — native Rust.** A deployed agent uses Agent-owned typed ports such as `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, and `Sandbox`, and the LLM Gateway-owned `LlmProvider` port. Concrete implementations remain replaceable adapters. A `MessageBus` port is intended but does not exist; see the capability taxonomy tracked in GitHub (issues #9 and #11).
+2. **Execution plane — native Rust.** A deployed agent uses Agent-owned typed ports such as `DefinitionStore`, `ToolRegistry`, `MemoryStore`, and `Sandbox`; consumes the LLM Gateway-owned `LlmProvider`; and consumes the Knowledge-owned synchronous `KnowledgeIndex` through `KnowledgeService`. Agent retains knowledge policy, planning, capability preflight, event projection, and output accounting. Knowledge has no MCP surface and Workflow has no Knowledge dependency. Concrete implementations remain replaceable adapters. A `MessageBus` port is intended but does not exist; see the capability taxonomy tracked in GitHub (issues #9 and #11).
 3. **Mesh/data plane — native peer protocol.** Deployed peers discover, communicate, and replicate explicitly selected data while remaining capable of offline operation and recovery.
 
 ## Agentic control-plane ownership

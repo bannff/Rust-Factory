@@ -457,7 +457,7 @@ mod composition {
         AgentDefinitionV1, AgentRegistry, CommunicationPolicy, DefinitionVersion, DenySandbox,
         ExecutionLimits, InMemoryDefinitionStore, InvocationContextV1, KnowledgePolicy,
         LocalAgentRuntime, MemoryPolicy, MemoryRequest, MemoryStore, ModelPolicy, SandboxPolicy,
-        StaticKnowledgeStore, StaticReferenceCatalog, ToolDescriptor, ToolRegistry, ToolRequest,
+        StaticReferenceCatalog, ToolDescriptor, ToolRegistry, ToolRequest,
     };
     use llm_gateway::{
         FinishReason, IdempotencyDisposition, JsonObject, ProviderRequestId, TokenUsage, ToolCall,
@@ -544,7 +544,7 @@ mod composition {
         provider: RecordingProvider,
         tools: Tools,
         memory: TenantMemory,
-        knowledge: StaticKnowledgeStore,
+        knowledge: knowledge::r#static::StaticKnowledgeIndex,
         sandbox: DenySandbox,
     }
     impl CeilingAgentRuntime for LocalRuntime {
@@ -609,6 +609,7 @@ mod composition {
             },
             knowledge: KnowledgePolicy {
                 enabled: false,
+                namespace: "default".to_owned(),
                 max_results: 0,
             },
             sandbox: SandboxPolicy {
@@ -657,7 +658,7 @@ mod composition {
             },
             tools: Tools(Arc::clone(&tools.0)),
             memory: TenantMemory::default(),
-            knowledge: StaticKnowledgeStore::default(),
+            knowledge: knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge"),
             sandbox: DenySandbox,
         };
         let store = InMemoryWorkflowStore::default();
@@ -716,6 +717,7 @@ mod composition {
             },
             knowledge: KnowledgePolicy {
                 enabled: false,
+                namespace: "default".to_owned(),
                 max_results: 0,
             },
             sandbox: SandboxPolicy {
@@ -760,7 +762,7 @@ mod composition {
             },
             tools: Tools::default(),
             memory: memory.clone(),
-            knowledge: StaticKnowledgeStore::default(),
+            knowledge: knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge"),
             sandbox: DenySandbox,
         };
         let tenant_a = TrustedContextV1 {
@@ -884,5 +886,388 @@ mod composition {
                 assert!(!evidence.contains(context_value));
             }
         }
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct KnowledgeSearchObservation {
+        tenant_id: String,
+        principal_id: String,
+        namespace: String,
+        query: String,
+        limit: u32,
+    }
+
+    struct RecordingKnowledgeIndex {
+        inner: knowledge::r#static::StaticKnowledgeIndex,
+        searches: Arc<Mutex<Vec<KnowledgeSearchObservation>>>,
+    }
+    impl knowledge::KnowledgeIndex for RecordingKnowledgeIndex {
+        fn search(
+            &self,
+            request: &knowledge::SearchRequest,
+        ) -> Result<Vec<knowledge::KnowledgeDocument>, knowledge::KnowledgeError> {
+            self.searches
+                .lock()
+                .expect("knowledge searches")
+                .push(KnowledgeSearchObservation {
+                    tenant_id: request.context().tenant_id().as_str().to_owned(),
+                    principal_id: request.context().principal_id().as_str().to_owned(),
+                    namespace: request.namespace().as_str().to_owned(),
+                    query: request.query().as_str().to_owned(),
+                    limit: request.limit().get(),
+                });
+            knowledge::KnowledgeIndex::search(&self.inner, request)
+        }
+    }
+
+    struct KnowledgeRuntime {
+        registry: AgentRegistry<InMemoryDefinitionStore, StaticReferenceCatalog>,
+        provider: StaticProvider,
+        knowledge: RecordingKnowledgeIndex,
+        results: Arc<Mutex<Vec<agent::InvocationResult>>>,
+    }
+    impl CeilingAgentRuntime for KnowledgeRuntime {
+        fn validate_agent(&self, id: &AgentId) -> Result<bool, WorkflowError> {
+            self.registry
+                .get(id)
+                .map(|_| true)
+                .map_err(WorkflowError::from)
+        }
+
+        fn invoke_with_ceiling<'a>(
+            &'a self,
+            invocation: CeilingAgentInvocation,
+            control: llm_gateway::InvocationControl<'a>,
+        ) -> CeilingInvocationFuture<'a> {
+            Box::pin(async move {
+                let tools = Tools::default();
+                let memory = agent::InMemoryMemoryStore::default();
+                let sandbox = DenySandbox;
+                let result = LocalAgentRuntime::new(
+                    &self.registry,
+                    &self.provider,
+                    &tools,
+                    &memory,
+                    &self.knowledge,
+                    &sandbox,
+                )
+                .invoke_with_ceiling(
+                    invocation.context,
+                    &invocation.agent_id,
+                    invocation.input,
+                    &invocation.effective_capability_ceiling,
+                    control,
+                )
+                .await
+                .map_err(WorkflowError::from)?;
+                self.results
+                    .lock()
+                    .expect("agent results")
+                    .push(result.clone());
+                Ok(result)
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct KnowledgeGrantPolicy {
+        knowledge_enabled: bool,
+    }
+    impl PolicyResolver for KnowledgeGrantPolicy {
+        fn authorize(&self, request: AuthorizationRequestV1) -> AuthorizationDecisionV1 {
+            allow_decision(
+                &request,
+                &GrantV1::new(
+                    Vec::<String>::new(),
+                    false,
+                    self.knowledge_enabled,
+                    false,
+                    false,
+                )
+                .expect("knowledge grant"),
+            )
+            .expect("knowledge decision")
+        }
+    }
+
+    fn knowledge_agent_definition() -> AgentDefinitionV1 {
+        AgentDefinitionV1 {
+            version: DefinitionVersion::V1,
+            id: AgentId::new("knowledge-agent").expect("agent"),
+            name: "Knowledge agent".to_owned(),
+            description: "scoped knowledge composition fixture".to_owned(),
+            model: ModelPolicy {
+                reference: "provider.model".to_owned(),
+            },
+            instructions: "Search scoped knowledge".to_owned(),
+            skills: vec![],
+            steering: vec![],
+            allowed_tool_ids: vec![],
+            memory: MemoryPolicy {
+                enabled: false,
+                max_items: 0,
+            },
+            knowledge: KnowledgePolicy {
+                enabled: true,
+                namespace: "selected-namespace".to_owned(),
+                max_results: 2,
+            },
+            sandbox: SandboxPolicy {
+                allow_execution: false,
+            },
+            communication: CommunicationPolicy {
+                allow_messages: false,
+            },
+            limits: ExecutionLimits {
+                max_tool_calls: 1,
+                max_output_bytes: 1024,
+            },
+        }
+    }
+
+    fn knowledge_fixture() -> StaticFixture {
+        StaticFixture::new(
+            "model-output",
+            vec![
+                ToolCall::new(
+                    ToolName::new("factory.knowledge.search").expect("name"),
+                    JsonObject::new(r#"{"query":"needle"}"#).expect("arguments"),
+                )
+                .expect("call"),
+            ],
+            Some(ProviderRequestId::new("knowledge-request").expect("request")),
+            FinishReason::ToolCalls,
+            Some(TokenUsage::new(1, 1, Some(2)).expect("usage")),
+            IdempotencyDisposition::Accepted,
+        )
+        .expect("fixture")
+    }
+
+    fn document(
+        tenant: &str,
+        namespace: &str,
+        document_id: &str,
+        text: &str,
+    ) -> knowledge::KnowledgeDocument {
+        knowledge::KnowledgeDocument::new(
+            knowledge::TenantId::new(tenant).expect("tenant"),
+            knowledge::NamespaceId::new(namespace).expect("namespace"),
+            knowledge::DocumentId::new(document_id).expect("document"),
+            text,
+        )
+        .expect("document")
+    }
+
+    #[test]
+    fn workflow_composes_scoped_knowledge_without_persisting_agent_events_or_context() {
+        let registry = AgentRegistry::new(
+            vec![knowledge_agent_definition()],
+            InMemoryDefinitionStore::default(),
+            StaticReferenceCatalog::new(["provider.model".to_owned()], [], [], []),
+        )
+        .expect("registry");
+        let searches = Arc::new(Mutex::new(Vec::new()));
+        let agent_results = Arc::new(Mutex::new(Vec::new()));
+        let runtime = KnowledgeRuntime {
+            registry,
+            provider: StaticProvider::success(knowledge_fixture()),
+            knowledge: RecordingKnowledgeIndex {
+                inner: knowledge::r#static::StaticKnowledgeIndex::new(vec![
+                    document(
+                        "tenant-visible",
+                        "selected-namespace",
+                        "visible-document",
+                        "needle visible text",
+                    ),
+                    document(
+                        "tenant-visible",
+                        "other-namespace",
+                        "wrong-namespace-document",
+                        "needle namespace leak",
+                    ),
+                    document(
+                        "other-tenant",
+                        "selected-namespace",
+                        "wrong-tenant-document",
+                        "needle tenant leak",
+                    ),
+                ])
+                .expect("knowledge"),
+                searches: Arc::clone(&searches),
+            },
+            results: Arc::clone(&agent_results),
+        };
+        let trusted_context = TrustedContextV1 {
+            tenant_id: TenantId::new("tenant-visible").expect("tenant"),
+            principal_id: PrincipalId::new("principal-secret").expect("principal"),
+            request_id: RequestId::new("request-secret").expect("request"),
+            correlation_id: CorrelationId::new("correlation-secret").expect("correlation"),
+        };
+        let store = InMemoryWorkflowStore::default();
+        let mcp = WorkflowMcp::new(
+            store.clone(),
+            StaticWorkflowCatalog::new([WorkflowDefinitionV1 {
+                id: LogicalId::new("knowledge-workflow").expect("workflow"),
+                version: WorkflowVersion::V1,
+                step: AgentStep {
+                    agent_id: AgentId::new("knowledge-agent").expect("agent"),
+                },
+                budget: WorkflowBudget::default(),
+            }]),
+            runtime,
+            WorkflowPolicyContextResolver::new(
+                Source(Ok(trusted_context)),
+                KnowledgeGrantPolicy {
+                    knowledge_enabled: true,
+                },
+            ),
+            Box::new(Factory),
+        );
+
+        let response = ready(Box::pin(mcp.start_json(StartInput {
+            workflow_id: "knowledge-workflow".to_owned(),
+            run_key: "knowledge-run".to_owned(),
+            input: "{}".to_owned(),
+        })))
+        .expect("start");
+        let response_json = serde_json::from_str::<serde_json::Value>(&response).expect("json");
+        assert_eq!(response_json["status"], "succeeded");
+        assert_eq!(response_json["terminal_reason"], "completed");
+        assert!(!response.contains("visible-document"));
+        assert!(!response.contains("needle visible text"));
+
+        assert_eq!(
+            searches.lock().expect("knowledge searches").as_slice(),
+            &[KnowledgeSearchObservation {
+                tenant_id: "tenant-visible".to_owned(),
+                principal_id: "principal-secret".to_owned(),
+                namespace: "selected-namespace".to_owned(),
+                query: "needle".to_owned(),
+                limit: 2,
+            }]
+        );
+        let results = agent_results.lock().expect("agent results");
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].events,
+            vec![
+                agent::InvocationEvent::ModelInvoked,
+                agent::InvocationEvent::KnowledgeSearched {
+                    results: vec![agent::KnowledgeResult {
+                        document_id: "visible-document".to_owned(),
+                        text: "needle visible text".to_owned(),
+                    }],
+                },
+            ]
+        );
+        drop(results);
+
+        let runs = store
+            .list(&LogicalId::new("tenant-visible").expect("tenant"))
+            .expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, crate::RunStatus::Succeeded);
+        assert_eq!(
+            runs[0].terminal_reason,
+            Some(crate::TerminalReason::Completed)
+        );
+        assert_eq!(
+            runs[0]
+                .events
+                .iter()
+                .map(|event| event.kind.as_str())
+                .collect::<Vec<_>>(),
+            ["started", "llm_generation", "result"]
+        );
+        assert_eq!(runs[0].events[2].data, "model-output");
+        let workflow_evidence = runs[0]
+            .events
+            .iter()
+            .map(|event| event.data.as_str())
+            .collect::<String>();
+        for private_value in [
+            "tenant-visible",
+            "principal-secret",
+            "request-secret",
+            "correlation-secret",
+            "selected-namespace",
+            "visible-document",
+            "needle visible text",
+        ] {
+            assert!(!workflow_evidence.contains(private_value));
+        }
+    }
+
+    #[test]
+    fn policy_knowledge_ceiling_false_prevents_static_index_effect() {
+        let registry = AgentRegistry::new(
+            vec![knowledge_agent_definition()],
+            InMemoryDefinitionStore::default(),
+            StaticReferenceCatalog::new(["provider.model".to_owned()], [], [], []),
+        )
+        .expect("registry");
+        let searches = Arc::new(Mutex::new(Vec::new()));
+        let agent_results = Arc::new(Mutex::new(Vec::new()));
+        let runtime = KnowledgeRuntime {
+            registry,
+            provider: StaticProvider::success(knowledge_fixture()),
+            knowledge: RecordingKnowledgeIndex {
+                inner: knowledge::r#static::StaticKnowledgeIndex::new(vec![document(
+                    "tenant-visible",
+                    "selected-namespace",
+                    "visible-document",
+                    "needle visible text",
+                )])
+                .expect("knowledge"),
+                searches: Arc::clone(&searches),
+            },
+            results: Arc::clone(&agent_results),
+        };
+        let store = InMemoryWorkflowStore::default();
+        let mcp = WorkflowMcp::new(
+            store.clone(),
+            StaticWorkflowCatalog::new([WorkflowDefinitionV1 {
+                id: LogicalId::new("knowledge-workflow").expect("workflow"),
+                version: WorkflowVersion::V1,
+                step: AgentStep {
+                    agent_id: AgentId::new("knowledge-agent").expect("agent"),
+                },
+                budget: WorkflowBudget::default(),
+            }]),
+            runtime,
+            WorkflowPolicyContextResolver::new(
+                Source(Ok(trusted("tenant-visible"))),
+                KnowledgeGrantPolicy {
+                    knowledge_enabled: false,
+                },
+            ),
+            Box::new(Factory),
+        );
+
+        let response = ready(Box::pin(mcp.start_json(StartInput {
+            workflow_id: "knowledge-workflow".to_owned(),
+            run_key: "denied-knowledge-run".to_owned(),
+            input: "{}".to_owned(),
+        })))
+        .expect("start");
+        let response_json = serde_json::from_str::<serde_json::Value>(&response).expect("json");
+        assert_eq!(response_json["status"], "failed");
+        assert_eq!(response_json["terminal_reason"], "invocation_failed");
+        assert!(searches.lock().expect("knowledge searches").is_empty());
+        assert!(agent_results.lock().expect("agent results").is_empty());
+
+        let runs = store
+            .list(&LogicalId::new("tenant-visible").expect("tenant"))
+            .expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, crate::RunStatus::Failed);
+        assert_eq!(
+            runs[0]
+                .events
+                .iter()
+                .map(|event| event.kind.as_str())
+                .collect::<Vec<_>>(),
+            ["started", "invocation_failed"]
+        );
     }
 }

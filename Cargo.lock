@@ -13,6 +13,7 @@ name = "agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "knowledge",
  "llm-gateway",
  "policy",
  "proptest",
@@ -1609,6 +1610,10 @@ dependencies = [
  "futures-util",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "knowledge"
+version = "0.1.0"
 
 [[package]]
 name = "lazy_static"
@@ -3871,6 +3876,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
+ "knowledge",
  "llm-gateway",
  "policy",
  "proptest",

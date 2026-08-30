@@ -5,7 +5,7 @@
 # cores. The -features targets below are what cover the adapter code; without
 # them roughly half the workspace would go uncompiled, unlinted, and untested.
 
-BRICKS := agent auth evaluation llm-gateway memory observability policy project storage workflow
+BRICKS := agent auth evaluation knowledge llm-gateway memory observability policy project storage workflow
 
 fmt:
 	cargo fmt --all
@@ -28,6 +28,7 @@ lint-features:
 	cargo clippy -p evaluation --features serdes-ai-evals --all-targets -- -D warnings
 	cargo clippy -p evaluation --features settings --all-targets -- -D warnings
 	cargo clippy -p evaluation --features mcp,memory,local,serdes-ai-evals,settings --all-targets -- -D warnings
+	cargo clippy -p knowledge --no-default-features --features static --all-targets -- -D warnings
 	cargo clippy -p llm-gateway --no-default-features --features static --all-targets -- -D warnings
 	cargo clippy -p llm-gateway --no-default-features --features genai --all-targets -- -D warnings
 	cargo clippy -p llm-gateway --no-default-features --features static,genai --all-targets -- -D warnings
@@ -62,6 +63,7 @@ test-features:
 	cargo test -p evaluation --features serdes-ai-evals
 	cargo test -p evaluation --features settings
 	cargo test -p evaluation --features mcp,memory,local,serdes-ai-evals,settings
+	cargo test -p knowledge --no-default-features --features static
 	cargo test -p llm-gateway --no-default-features --features static
 	cargo test -p llm-gateway --no-default-features --features genai
 	cargo test -p llm-gateway --no-default-features --features static,genai

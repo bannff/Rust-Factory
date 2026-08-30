@@ -5,17 +5,18 @@
 ```text
 agent
   definition + registry + policy + invocation contracts
-  DefinitionStore / ToolRegistry / MemoryStore / KnowledgeStore / Sandbox
+  DefinitionStore / ToolRegistry / MemoryStore / Sandbox
                  │ async generation through llm_gateway::LlmProvider
+                 │ bounded retrieval through knowledge::KnowledgeService
                  ↑
   deterministic local adapters (first) → provider/storage/sandbox adapters (later)
                  ↑
   agent::mcp: control-plane validation, registry, bounded invoke
 ```
 
-The core owns Agent data, scope, trusted `InvocationContextV1`, and policy. LLM Gateway owns the provider-neutral generation port and bounded request/response/evidence types. Each Agent adapter implements one Agent-owned core trait; `LocalAgentRuntime` receives `llm_gateway::LlmProvider` by inward dependency. The MCP module receives those traits, the provider, trusted context, and composition-owned invocation-control factory through dependency injection and never selects a provider or constructs storage/sandbox adapters itself.
+The core owns Agent data, scope, trusted `InvocationContextV1`, and policy, including `KnowledgePolicy` namespace/grant resolution, planning, preflight, event projection, and output accounting. LLM Gateway owns the provider-neutral generation port and bounded request/response/evidence types. Knowledge owns `KnowledgeIndex`, `KnowledgeService`, and retrieval-domain validation. `LocalAgentRuntime` consumes both capabilities by inward dependency while retaining Agent orchestration. The MCP module receives Agent-owned ports, the provider, the Knowledge index, trusted context, and composition-owned invocation-control factory through dependency injection; Knowledge has no MCP surface.
 
-> **Issue #34 supersession:** the original delivered design used Agent-owned synchronous `ModelProvider`, `ModelRequest`, and `StaticModelProvider` contracts. Those names below would be historical only; current and future implementation uses `llm_gateway::LlmProvider`, borrowed async `InvocationControl`, explicit Agent `InvocationContextV1`, and `llm_gateway::r#static::StaticProvider`.
+> **Issues #34 and #37 supersession:** the original delivered design used Agent-owned synchronous `ModelProvider`, `ModelRequest`, and `StaticModelProvider`, plus Agent-owned `KnowledgeRequest`, `KnowledgeStore`, and `StaticKnowledgeStore`. Those names are historical only. Current Agent uses `llm_gateway::LlmProvider`, borrowed async `InvocationControl`, explicit Agent `InvocationContextV1`, and Knowledge-owned `KnowledgeIndex`/`KnowledgeService`; issue #37 removed the provisional Knowledge path atomically. Agent still owns `KnowledgePolicy` namespace/grant resolution, planning, preflight, event projection, and output accounting.
 
 ## Definition and registry
 
@@ -42,7 +43,7 @@ Deterministic tests use `llm_gateway::r#static::StaticProvider`. Provider client
 - `DefinitionStore`: load/list/save user definitions; built-ins are not persisted through this port.
 - `ToolRegistry`: resolve and invoke only registered typed tools by ID.
 - `MemoryStore`: scoped recall and write requests with explicit invocation context.
-- `KnowledgeStore`: scoped search requests with explicit invocation context.
+- `knowledge::KnowledgeIndex` through `knowledge::KnowledgeService`: synchronously search one trusted tenant and definition-selected namespace; Knowledge owns request validation, adapter-output checks, and bounded result projection, while Agent owns policy, planning, preflight, events, and output accounting.
 - `Sandbox`: typed execute request with explicit invocation context; the initial adapter always denies.
 
 Each port has typed request and response values. Core contracts do not expose strings that are interpreted as shell commands, source code, provider configuration, or arbitrary filesystem paths.

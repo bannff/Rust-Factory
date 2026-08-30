@@ -1,0 +1,20 @@
+[package]
+name = "knowledge"
+description = "Bounded deterministic knowledge retrieval with a framework-free core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[package.metadata.rust-factory]
+family = "knowledge"
+role = "brick"
+status = "implemented"
+
+[features]
+default = []
+static = []
+
+[lints]
+workspace = true
