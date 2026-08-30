@@ -13,9 +13,9 @@
 use crate::{
     AgentDefinitionV1, AgentId, AgentRegistry, CommunicationPolicy, CorrelationId, DefinitionError,
     DefinitionStore, DefinitionVersion, EffectiveCapabilityCeilingV1, ExecutionLimits,
-    InvocationContextV1, KnowledgePolicy, KnowledgeStore, LocalAgentRuntime, MAX_INPUT_BYTES,
-    MemoryPolicy, MemoryStore, ModelPolicy, PrincipalId, PublicErrorCode, ReferenceCatalog,
-    RequestId, Sandbox, SandboxPolicy, TenantId, ToolRegistry, validate_definition,
+    InvocationContextV1, KnowledgePolicy, LocalAgentRuntime, MAX_INPUT_BYTES, MemoryPolicy,
+    MemoryStore, ModelPolicy, PrincipalId, PublicErrorCode, ReferenceCatalog, RequestId, Sandbox,
+    SandboxPolicy, TenantId, ToolRegistry, validate_definition,
 };
 use anyhow::{Context, Result};
 use policy::{
@@ -136,6 +136,7 @@ pub struct AgentDefinitionInput {
     pub memory_enabled: bool,
     pub memory_max_items: u32,
     pub knowledge_enabled: bool,
+    pub knowledge_namespace: String,
     pub knowledge_max_results: u32,
     pub sandbox_allow_execution: bool,
     pub communication_allow_messages: bool,
@@ -162,6 +163,7 @@ impl AgentDefinitionInput {
             },
             knowledge: KnowledgePolicy {
                 enabled: self.knowledge_enabled,
+                namespace: self.knowledge_namespace,
                 max_results: self.knowledge_max_results,
             },
             sandbox: SandboxPolicy {
@@ -205,7 +207,7 @@ where
     M: llm_gateway::LlmProvider,
     T: ToolRegistry,
     MM: MemoryStore,
-    K: KnowledgeStore,
+    K: knowledge::KnowledgeIndex,
     SB: Sandbox,
     TS: TrustedContextSource,
     P: PolicyResolver,
@@ -227,7 +229,7 @@ where
     M: llm_gateway::LlmProvider + 'static,
     T: ToolRegistry + 'static,
     MM: MemoryStore + 'static,
-    K: KnowledgeStore + 'static,
+    K: knowledge::KnowledgeIndex + 'static,
     SB: Sandbox + 'static,
     TS: TrustedContextSource + 'static,
     P: PolicyResolver + 'static,
@@ -349,7 +351,7 @@ where
     M: llm_gateway::LlmProvider + 'static,
     T: ToolRegistry + 'static,
     MM: MemoryStore + 'static,
-    K: KnowledgeStore + 'static,
+    K: knowledge::KnowledgeIndex + 'static,
     SB: Sandbox + 'static,
     TS: TrustedContextSource + 'static,
     P: PolicyResolver + 'static,
@@ -406,7 +408,7 @@ where
     M: llm_gateway::LlmProvider + 'static,
     T: ToolRegistry + 'static,
     MM: MemoryStore + 'static,
-    K: KnowledgeStore + 'static,
+    K: knowledge::KnowledgeIndex + 'static,
     SB: Sandbox + 'static,
     TS: TrustedContextSource + 'static,
     P: PolicyResolver + 'static,
@@ -435,7 +437,7 @@ fn domain_error(error: DefinitionError) -> anyhow::Error {
 }
 fn definition_json(definition: &AgentDefinitionV1) -> Result<String> {
     serialize(
-        json!({"version": definition.version.as_str(), "id": definition.id.as_str(), "name": definition.name, "description": definition.description, "model_reference": definition.model.reference, "instructions": definition.instructions, "skills": definition.skills, "steering": definition.steering, "allowed_tool_ids": definition.allowed_tool_ids, "memory": {"enabled": definition.memory.enabled, "max_items": definition.memory.max_items}, "knowledge": {"enabled": definition.knowledge.enabled, "max_results": definition.knowledge.max_results}, "sandbox": {"allow_execution": definition.sandbox.allow_execution}, "communication": {"allow_messages": definition.communication.allow_messages}, "limits": {"max_tool_calls": definition.limits.max_tool_calls, "max_output_bytes": definition.limits.max_output_bytes}}),
+        json!({"version": definition.version.as_str(), "id": definition.id.as_str(), "name": definition.name, "description": definition.description, "model_reference": definition.model.reference, "instructions": definition.instructions, "skills": definition.skills, "steering": definition.steering, "allowed_tool_ids": definition.allowed_tool_ids, "memory": {"enabled": definition.memory.enabled, "max_items": definition.memory.max_items}, "knowledge": {"enabled": definition.knowledge.enabled, "namespace": definition.knowledge.namespace, "max_results": definition.knowledge.max_results}, "sandbox": {"allow_execution": definition.sandbox.allow_execution}, "communication": {"allow_messages": definition.communication.allow_messages}, "limits": {"max_tool_calls": definition.limits.max_tool_calls, "max_output_bytes": definition.limits.max_output_bytes}}),
     )
 }
 fn invocation_json(result: crate::InvocationResult) -> Result<String> {
@@ -444,7 +446,7 @@ fn invocation_json(result: crate::InvocationResult) -> Result<String> {
             crate::InvocationEvent::ModelInvoked => json!({"type":"model_invoked"}),
             crate::InvocationEvent::MemoryRecalled { values } => json!({"type":"memory_recalled", "values":values}),
             crate::InvocationEvent::MemoryWritten => json!({"type":"memory_written"}),
-            crate::InvocationEvent::KnowledgeSearched { results } => json!({"type":"knowledge_searched", "results":results}),
+            crate::InvocationEvent::KnowledgeSearched { results } => json!({"type":"knowledge_searched", "results":results.into_iter().map(|result| json!({"document_id":result.document_id,"text":result.text})).collect::<Vec<_>>() }),
             crate::InvocationEvent::SandboxCompleted { output } => json!({"type":"sandbox_completed", "output":output}),
             crate::InvocationEvent::ToolCompleted { tool_id, output } => json!({"type":"tool_completed", "tool_id":tool_id, "output":output}),
         }).collect::<Vec<_>>(), "output": result.output, "model_evidence": {
@@ -553,7 +555,7 @@ mod migration_tests {
     use crate::{
         AgentDefinitionV1, CommunicationPolicy, DefinitionVersion, DenySandbox, FixedToolRegistry,
         InMemoryDefinitionStore, InMemoryMemoryStore, KnowledgePolicy, MemoryPolicy, ModelPolicy,
-        SandboxPolicy, StaticKnowledgeStore, StaticReferenceCatalog,
+        SandboxPolicy, StaticReferenceCatalog,
     };
 
     struct Cancellation;
@@ -659,6 +661,7 @@ mod migration_tests {
             },
             knowledge: KnowledgePolicy {
                 enabled: false,
+                namespace: "default".to_owned(),
                 max_results: 0,
             },
             sandbox: SandboxPolicy {
@@ -683,7 +686,7 @@ mod migration_tests {
         StaticProvider,
         FixedToolRegistry,
         InMemoryMemoryStore,
-        StaticKnowledgeStore,
+        knowledge::r#static::StaticKnowledgeIndex,
         DenySandbox,
         ContextSource,
         Policy,
@@ -705,7 +708,7 @@ mod migration_tests {
             ),
             FixedToolRegistry::default(),
             InMemoryMemoryStore::default(),
-            StaticKnowledgeStore::default(),
+            knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge"),
             DenySandbox,
             AgentPolicyContextResolver::new(ContextSource, Policy(allow)),
             Box::new(ControlSource(control_calls)),
@@ -855,7 +858,7 @@ mod migration_tests {
             },
             FixedToolRegistry::default(),
             InMemoryMemoryStore::default(),
-            StaticKnowledgeStore::default(),
+            knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge"),
             DenySandbox,
             AgentPolicyContextResolver::new(ContextSource, Policy(true)),
             Box::new(ControlSource(Arc::clone(&control_calls))),
@@ -945,7 +948,7 @@ mod migration_tests {
             provider,
             FixedToolRegistry::default(),
             CapturingMemory(Arc::clone(&captured)),
-            StaticKnowledgeStore::default(),
+            knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge"),
             DenySandbox,
             AgentPolicyContextResolver::new(ContextSource, MemoryPolicyResolver),
             Box::new(ControlSource(Arc::new(Mutex::new(0)))),
@@ -961,5 +964,95 @@ mod migration_tests {
         assert_eq!(context.principal_id().as_str(), "host-principal");
         assert_eq!(context.request_id().as_str(), "host-request");
         assert_eq!(context.correlation_id().as_str(), "host-correlation");
+    }
+
+    #[test]
+    fn definition_schema_requires_closed_knowledge_namespace_and_projects_it() {
+        let schema = serde_json::to_value(schemars::schema_for!(AgentDefinitionInput))
+            .expect("definition schema");
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(
+            schema["required"]
+                .as_array()
+                .expect("required")
+                .iter()
+                .any(|field| field == "knowledge_namespace")
+        );
+
+        let mut input = json!({
+            "id": "agent",
+            "name": "Agent",
+            "description": "Definition",
+            "model_reference": "static.model",
+            "instructions": "Respond.",
+            "memory_enabled": false,
+            "memory_max_items": 0,
+            "knowledge_enabled": false,
+            "knowledge_namespace": "default",
+            "knowledge_max_results": 0,
+            "sandbox_allow_execution": false,
+            "communication_allow_messages": false,
+            "max_tool_calls": 1,
+            "max_output_bytes": 128
+        });
+        let converted = serde_json::from_value::<AgentDefinitionInput>(input.clone())
+            .expect("definition input")
+            .into_core()
+            .expect("core definition");
+        assert_eq!(
+            converted.knowledge,
+            KnowledgePolicy {
+                enabled: false,
+                namespace: "default".to_owned(),
+                max_results: 0,
+            }
+        );
+        input
+            .as_object_mut()
+            .expect("object")
+            .remove("knowledge_namespace");
+        assert!(serde_json::from_value::<AgentDefinitionInput>(input).is_err());
+
+        let projected: serde_json::Value =
+            serde_json::from_str(&definition_json(&definition()).expect("definition projection"))
+                .expect("definition json");
+        assert_eq!(
+            projected["knowledge"],
+            json!({"enabled": false, "namespace": "default", "max_results": 0})
+        );
+    }
+
+    #[test]
+    fn knowledge_event_projection_is_exact_and_context_free() {
+        let serialized = invocation_json(crate::InvocationResult {
+            capability_scope_digest: "digest".to_owned(),
+            events: vec![crate::InvocationEvent::KnowledgeSearched {
+                results: vec![crate::KnowledgeResult {
+                    document_id: "doc-1".to_owned(),
+                    text: "bounded text".to_owned(),
+                }],
+            }],
+            output: String::new(),
+            model_evidence: crate::InvocationModelEvidence {
+                provider_id: "static".to_owned(),
+                model_id: "model".to_owned(),
+                provider_request_id: None,
+                finish_reason: crate::InvocationModelFinishReason::Stop,
+                token_usage: None,
+                idempotency: crate::InvocationModelIdempotency::Unsupported,
+            },
+        })
+        .expect("projection");
+        let value: serde_json::Value = serde_json::from_str(&serialized).expect("json");
+        assert_eq!(
+            value["events"][0],
+            json!({
+                "type": "knowledge_searched",
+                "results": [{"document_id": "doc-1", "text": "bounded text"}]
+            })
+        );
+        for forbidden in ["tenant_id", "principal_id", "namespace"] {
+            assert!(!serialized.contains(forbidden));
+        }
     }
 }

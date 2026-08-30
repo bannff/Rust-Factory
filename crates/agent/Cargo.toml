@@ -19,6 +19,7 @@ status = "implemented"
 mcp = ["dep:anyhow", "dep:policy", "dep:rmcp", "dep:schemars", "dep:serde"]
 
 [dependencies]
+knowledge = { path = "../knowledge", version = "=0.1.0" }
 llm-gateway = { path = "../llm-gateway", version = "=0.1.0" }
 serde_json.workspace = true
 sha2.workspace = true
@@ -30,6 +31,7 @@ schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+knowledge = { path = "../knowledge", version = "=0.1.0", features = ["static"] }
 llm-gateway = { path = "../llm-gateway", version = "=0.1.0", features = ["static"] }
 proptest.workspace = true
 

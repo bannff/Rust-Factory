@@ -153,6 +153,7 @@ pub struct MemoryPolicy {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KnowledgePolicy {
     pub enabled: bool,
+    pub namespace: String,
     pub max_results: u32,
 }
 /// Typed sandbox policy.
@@ -365,6 +366,8 @@ pub fn validate_definition(definition: &AgentDefinitionV1) -> Result<(), Definit
         || definition.limits.max_output_bytes > MAX_OUTPUT_BYTES
         || (definition.memory.enabled && definition.memory.max_items == 0)
         || (definition.knowledge.enabled && definition.knowledge.max_results == 0)
+        || definition.knowledge.max_results > knowledge::MAX_SEARCH_LIMIT
+        || knowledge::NamespaceId::new(definition.knowledge.namespace.clone()).is_err()
     {
         return Err(DefinitionError::InvalidDefinition);
     }
@@ -665,6 +668,7 @@ impl ResolvedCapabilityScope {
             },
             knowledge: KnowledgePolicy {
                 enabled: definition.knowledge.enabled && ceiling.knowledge_enabled,
+                namespace: definition.knowledge.namespace.clone(),
                 max_results: definition.knowledge.max_results,
             },
             sandbox: SandboxPolicy {
@@ -770,23 +774,6 @@ pub trait MemoryStore: Send + Sync {
     fn recall(&self, request: MemoryRequest) -> Result<Vec<String>, DefinitionError>;
     fn write(&self, request: MemoryRequest, value: String) -> Result<(), DefinitionError>;
 }
-/// Scoped knowledge-search request.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KnowledgeRequest {
-    pub context: InvocationContextV1,
-    pub agent_id: AgentId,
-    pub capability_scope: ResolvedCapabilityScope,
-    pub query: String,
-    pub limit: u32,
-}
-/// Knowledge-retrieval port.
-///
-/// Owned here while the Knowledge family is deferred in the portfolio registry.
-/// The registry names `knowledge-core` as its future home; no package exists
-/// until a demonstrated consumer drives one.
-pub trait KnowledgeStore: Send + Sync {
-    fn search(&self, request: KnowledgeRequest) -> Result<Vec<String>, DefinitionError>;
-}
 /// A typed sandbox action identifier and arguments, never source code or a shell command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SandboxRequest {
@@ -863,28 +850,6 @@ impl MemoryStore for InMemoryMemoryStore {
         Ok(())
     }
 }
-/// Deterministic static knowledge adapter.
-#[derive(Default)]
-pub struct StaticKnowledgeStore {
-    values: Vec<String>,
-}
-impl StaticKnowledgeStore {
-    #[must_use]
-    pub fn new(values: Vec<String>) -> Self {
-        Self { values }
-    }
-}
-impl KnowledgeStore for StaticKnowledgeStore {
-    fn search(&self, request: KnowledgeRequest) -> Result<Vec<String>, DefinitionError> {
-        Ok(self
-            .values
-            .iter()
-            .filter(|value| value.contains(&request.query))
-            .take(request.limit as usize)
-            .cloned()
-            .collect())
-    }
-}
 /// Initial sandbox adapter that always denies execution.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DenySandbox;
@@ -894,13 +859,20 @@ impl Sandbox for DenySandbox {
     }
 }
 
+/// Agent-owned projection of one bounded knowledge hit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KnowledgeResult {
+    pub document_id: String,
+    pub text: String,
+}
+
 /// Ordered normalized runtime event.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InvocationEvent {
     ModelInvoked,
     MemoryRecalled { values: Vec<String> },
     MemoryWritten,
-    KnowledgeSearched { results: Vec<String> },
+    KnowledgeSearched { results: Vec<KnowledgeResult> },
     SandboxCompleted { output: String },
     ToolCompleted { tool_id: String, output: String },
 }
@@ -964,7 +936,7 @@ impl<
     M: llm_gateway::LlmProvider,
     T: ToolRegistry,
     MM: MemoryStore,
-    K: KnowledgeStore,
+    K: knowledge::KnowledgeIndex,
     SB: Sandbox,
 > LocalAgentRuntime<'a, S, C, M, T, MM, K, SB>
 {
@@ -1192,14 +1164,31 @@ impl<
                 }
                 PlannedEffect::KnowledgeSearch { query } => {
                     control.preflight().map_err(map_gateway_error)?;
-                    let results = self.knowledge.search(KnowledgeRequest {
-                        context: context.clone(),
-                        agent_id: id.clone(),
-                        capability_scope: scope.clone(),
-                        query,
-                        limit: scope.knowledge.max_results,
-                    })?;
-                    output_bytes = checked_values_output_bytes(
+                    let request = knowledge::SearchRequest::new(
+                        knowledge::SearchContext::new(
+                            knowledge::TenantId::new(context.tenant_id().as_str())
+                                .map_err(map_knowledge_error)?,
+                            knowledge::PrincipalId::new(context.principal_id().as_str())
+                                .map_err(map_knowledge_error)?,
+                        ),
+                        knowledge::NamespaceId::new(scope.knowledge.namespace.clone())
+                            .map_err(map_knowledge_error)?,
+                        knowledge::Query::new(query).map_err(map_knowledge_error)?,
+                        knowledge::SearchLimit::new(scope.knowledge.max_results)
+                            .map_err(map_knowledge_error)?,
+                    );
+                    let result = knowledge::KnowledgeService::new(self.knowledge)
+                        .search(&request)
+                        .map_err(map_knowledge_error)?;
+                    let results = result
+                        .hits()
+                        .iter()
+                        .map(|hit| KnowledgeResult {
+                            document_id: hit.document_id().as_str().to_owned(),
+                            text: hit.text().to_owned(),
+                        })
+                        .collect::<Vec<_>>();
+                    output_bytes = checked_knowledge_results_output_bytes(
                         &results,
                         output_bytes,
                         scope.limits.max_output_bytes,
@@ -1372,6 +1361,16 @@ fn map_gateway_error(error: llm_gateway::LlmError) -> DefinitionError {
     }
 }
 
+fn map_knowledge_error(error: knowledge::KnowledgeError) -> DefinitionError {
+    match error {
+        knowledge::KnowledgeError::InvalidRequest => DefinitionError::InvalidDefinition,
+        knowledge::KnowledgeError::LimitExceeded => DefinitionError::LimitExceeded,
+        knowledge::KnowledgeError::Unavailable | knowledge::KnowledgeError::ProtocolViolation => {
+            DefinitionError::AdapterFailure
+        }
+    }
+}
+
 fn project_model_evidence(evidence: &llm_gateway::GenerationEvidence) -> InvocationModelEvidence {
     InvocationModelEvidence {
         provider_id: evidence.provider_id().as_str().to_owned(),
@@ -1418,6 +1417,15 @@ fn checked_values_output_bytes(
     values
         .iter()
         .try_fold(used, |total, value| checked_output_bytes(value, total, max))
+}
+fn checked_knowledge_results_output_bytes(
+    results: &[KnowledgeResult],
+    used: usize,
+    max: u32,
+) -> Result<usize, DefinitionError> {
+    results.iter().try_fold(used, |total, result| {
+        checked_output_bytes(&result.text, total, max)
+    })
 }
 
 /// Computes a stable versioned SHA-256 hexadecimal digest of the complete definition scope.
@@ -1490,6 +1498,11 @@ fn digest_scope(scope: &ResolvedCapabilityScope) -> String {
         &mut hasher,
         "memory_max_items",
         &number(scope.memory.max_items),
+    );
+    field(
+        &mut hasher,
+        "knowledge_namespace",
+        scope.knowledge.namespace.as_bytes(),
     );
     field(
         &mut hasher,

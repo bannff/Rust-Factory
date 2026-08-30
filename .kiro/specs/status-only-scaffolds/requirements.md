@@ -2,7 +2,8 @@
 
 GitHub issue: #9
 
-> **Superseded in part by [Issue #11](https://github.com/bannff/Rust-Factory/issues/11) and [Issue #34](https://github.com/bannff/Rust-Factory/issues/34).**
+> **Superseded in part by [Issue #11](https://github.com/bannff/Rust-Factory/issues/11), [Issue #34](https://github.com/bannff/Rust-Factory/issues/34), and [Issue #37](https://github.com/bannff/Rust-Factory/issues/37).**
+> Knowledge is no longer roadmap-only or status-only: issue #37 owns a real implemented `knowledge` brick. Its implementation, atomic Agent migration, Workflow fixture migration, adversarial QA, security review, final Rust SME/meta-architecture reviews, status promotion to `implemented`, focused Rust 1.88 validation, and `make check` are complete with no Blocker or Required findings. Only issue evidence, merge, and delivery remain pending; no merge or issue closure is claimed.
 > This spec records the Issue #9 scaffold rollout as delivered, then revised.
 > Requirement 1's 13-family enumeration no longer holds: 10 of those families
 > own no package. Only `sandbox` remains a status-only tree; the former
@@ -11,9 +12,7 @@ GitHub issue: #9
 > gates approved with no Blocker or Required findings remaining; only merge and
 > issue delivery remain. There is no current implementation-pending scaffold
 > claim. `workspace-governance`,
-> `identity`, `memory`, `knowledge`, `verification`, `message-bus`, `cache`,
-> `graph`, `observability`, and `notification` remain roadmap items tracked in
-> GitHub issues and GitHub Projects, and `tool-execution` folded into Sandbox. Requirements 2, 3, and 5
+> `identity`, `verification`, `message-bus`, `cache`, `graph`, and `notification` remain roadmap items tracked in GitHub issues and GitHub Projects. `memory` and `observability` are implemented bricks, Knowledge is implemented under issue #37 with final reviews, status promotion, and `make check` complete and only issue evidence/merge/delivery pending, and `tool-execution` folded into Sandbox. Requirements 2, 3, and 5
 > remain in force for any package that is status-only. Requirement 4's
 > validator was generalized to cover every workspace package and reconcile
 > workspace members, on-disk package directories, Cargo metadata, and package

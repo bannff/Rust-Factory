@@ -256,6 +256,7 @@ fn definition(tools: &[&str]) -> AgentDefinitionV1 {
         },
         knowledge: KnowledgePolicy {
             enabled: false,
+            namespace: "default".to_owned(),
             max_results: 0,
         },
         sandbox: SandboxPolicy {
@@ -283,6 +284,15 @@ fn registry(
     .expect("registry")
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct KnowledgeRequestSnapshot {
+    tenant_id: String,
+    principal_id: String,
+    namespace: String,
+    query: String,
+    limit: u32,
+}
+
 #[derive(Default)]
 struct EffectCounts {
     tool_resolves: AtomicUsize,
@@ -290,6 +300,7 @@ struct EffectCounts {
     memory_recalls: AtomicUsize,
     memory_writes: AtomicUsize,
     knowledge_searches: AtomicUsize,
+    knowledge_requests: Mutex<Vec<KnowledgeRequestSnapshot>>,
     sandbox_executes: AtomicUsize,
     contexts: Mutex<Vec<InvocationContextV1>>,
     cancel_after_tool_invoke: Mutex<Option<Arc<AtomicBool>>>,
@@ -344,14 +355,23 @@ impl MemoryStore for RecordingMemory {
     }
 }
 struct RecordingKnowledge(Arc<EffectCounts>);
-impl KnowledgeStore for RecordingKnowledge {
-    fn search(&self, request: KnowledgeRequest) -> Result<Vec<String>, DefinitionError> {
+impl knowledge::KnowledgeIndex for RecordingKnowledge {
+    fn search(
+        &self,
+        request: &knowledge::SearchRequest,
+    ) -> Result<Vec<knowledge::KnowledgeDocument>, knowledge::KnowledgeError> {
         self.0.knowledge_searches.fetch_add(1, Ordering::SeqCst);
         self.0
-            .contexts
+            .knowledge_requests
             .lock()
-            .expect("contexts")
-            .push(request.context);
+            .expect("knowledge requests")
+            .push(KnowledgeRequestSnapshot {
+                tenant_id: request.context().tenant_id().as_str().to_owned(),
+                principal_id: request.context().principal_id().as_str().to_owned(),
+                namespace: request.namespace().as_str().to_owned(),
+                query: request.query().as_str().to_owned(),
+                limit: request.limit().get(),
+            });
         Ok(vec![])
     }
 }
@@ -546,6 +566,7 @@ fn gateway_request_contains_only_normalized_model_prompt_limits_and_effective_to
     };
     value.knowledge = KnowledgePolicy {
         enabled: true,
+        namespace: "default".to_owned(),
         max_results: 3,
     };
     value.sandbox.allow_execution = true;
@@ -636,6 +657,7 @@ fn every_reserved_tool_has_the_exact_closed_agent_owned_schema() {
     };
     value.knowledge = KnowledgePolicy {
         enabled: true,
+        namespace: "default".to_owned(),
         max_results: 1,
     };
     value.sandbox.allow_execution = true;
@@ -691,6 +713,7 @@ fn malformed_reserved_and_ordinary_arguments_never_reach_effect_ports() {
         };
         value.knowledge = KnowledgePolicy {
             enabled: true,
+            namespace: "default".to_owned(),
             max_results: 1,
         };
         value.sandbox.allow_execution = true;
@@ -751,6 +774,7 @@ fn reserved_limits_are_checked_before_effects() {
         };
         value.knowledge = KnowledgePolicy {
             enabled: true,
+            namespace: "default".to_owned(),
             max_results: 1,
         };
         value.sandbox.allow_execution = true;
@@ -792,6 +816,7 @@ fn denied_capabilities_are_absent_from_request_and_cannot_reach_effects() {
     };
     value.knowledge = KnowledgePolicy {
         enabled: true,
+        namespace: "default".to_owned(),
         max_results: 1,
     };
     value.sandbox.allow_execution = true;
@@ -1137,6 +1162,9 @@ fn scope_digest_is_canonical_and_covers_policy_fields() {
     changed.communication.allow_messages = true;
     assert_ne!(digest, capability_scope_digest(&changed, &tools));
     changed = left.clone();
+    changed.knowledge.namespace = "other".to_owned();
+    assert_ne!(digest, capability_scope_digest(&changed, &tools));
+    changed = left.clone();
     changed.instructions.push('!');
     assert_ne!(digest, capability_scope_digest(&changed, &tools));
     assert_ne!(digest, capability_scope_digest(&left, &tools[..1]));
@@ -1244,6 +1272,7 @@ fn every_effect_port_receives_the_complete_context_unchanged() {
     };
     value.knowledge = KnowledgePolicy {
         enabled: true,
+        namespace: "default".to_owned(),
         max_results: 1,
     };
     value.sandbox.allow_execution = true;
@@ -1277,7 +1306,20 @@ fn every_effect_port_receives_the_complete_context_unchanged() {
     .expect("invoke");
     assert_eq!(
         *counts.contexts.lock().expect("contexts"),
-        vec![expected; 4]
+        vec![expected.clone(); 3]
+    );
+    assert_eq!(
+        *counts
+            .knowledge_requests
+            .lock()
+            .expect("knowledge requests"),
+        vec![KnowledgeRequestSnapshot {
+            tenant_id: expected.tenant_id().as_str().to_owned(),
+            principal_id: expected.principal_id().as_str().to_owned(),
+            namespace: "default".to_owned(),
+            query: "x".to_owned(),
+            limit: 1,
+        }]
     );
 }
 
@@ -1343,7 +1385,7 @@ fn in_memory_memory_store_isolates_tenants_without_changing_order_or_query_limit
     let registry = registry(value);
     let memory = InMemoryMemoryStore::default();
     let tools = FixedToolRegistry::default();
-    let knowledge = StaticKnowledgeStore::default();
+    let knowledge = knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge");
     let sandbox = DenySandbox;
     let controls = Controls::new("key");
     let tenant_a = InvocationContextV1::new(
@@ -1408,4 +1450,443 @@ fn in_memory_memory_store_isolates_tenants_without_changing_order_or_query_limit
             InvocationEvent::MemoryRecalled { values } if values == &expected
         ));
     }
+}
+
+struct ScriptedKnowledge {
+    response: Result<Vec<knowledge::KnowledgeDocument>, knowledge::KnowledgeError>,
+}
+impl knowledge::KnowledgeIndex for ScriptedKnowledge {
+    fn search(
+        &self,
+        _: &knowledge::SearchRequest,
+    ) -> Result<Vec<knowledge::KnowledgeDocument>, knowledge::KnowledgeError> {
+        self.response.clone()
+    }
+}
+
+fn knowledge_document(document_id: &str, text: &str) -> knowledge::KnowledgeDocument {
+    knowledge::KnowledgeDocument::new(
+        knowledge::TenantId::new("tenant").expect("tenant"),
+        knowledge::NamespaceId::new("default").expect("namespace"),
+        knowledge::DocumentId::new(document_id).expect("document"),
+        text,
+    )
+    .expect("document")
+}
+
+fn invoke_knowledge(
+    index: &impl knowledge::KnowledgeIndex,
+    max_output_bytes: u32,
+    response_text: &str,
+) -> Result<InvocationResult, DefinitionError> {
+    let mut value = definition(&[]);
+    value.knowledge = KnowledgePolicy {
+        enabled: true,
+        namespace: "default".to_owned(),
+        max_results: 2,
+    };
+    value.limits.max_output_bytes = max_output_bytes;
+    let registry = registry(value);
+    let (provider, _) = RecordingProvider::response(ResponsePlan {
+        text: response_text.to_owned(),
+        calls: vec![(
+            "factory.knowledge.search".to_owned(),
+            r#"{"query":"match"}"#.to_owned(),
+        )],
+        ..ResponsePlan::default()
+    });
+    let tools = FixedToolRegistry::default();
+    let memory = InMemoryMemoryStore::default();
+    let sandbox = DenySandbox;
+    let runtime = LocalAgentRuntime::new(&registry, &provider, &tools, &memory, index, &sandbox);
+    ready(runtime.invoke(
+        invocation_context(),
+        &AgentId::new("agent").expect("id"),
+        String::new(),
+        Controls::new("knowledge-key").control(),
+    ))
+}
+
+#[test]
+fn canonical_knowledge_search_projects_owned_results_and_accounts_only_text() {
+    let index = ScriptedKnowledge {
+        response: Ok(vec![knowledge_document("doc-1", "match text")]),
+    };
+    let result = invoke_knowledge(&index, 10, "").expect("knowledge search");
+    assert_eq!(
+        result.events[1],
+        InvocationEvent::KnowledgeSearched {
+            results: vec![KnowledgeResult {
+                document_id: "doc-1".to_owned(),
+                text: "match text".to_owned(),
+            }],
+        }
+    );
+
+    let long_identifier = "d".repeat(128);
+    let index = ScriptedKnowledge {
+        response: Ok(vec![knowledge_document(&long_identifier, "12345")]),
+    };
+    assert!(invoke_knowledge(&index, 5, "").is_ok());
+    assert_eq!(
+        invoke_knowledge(&index, 5, "x"),
+        Err(DefinitionError::LimitExceeded)
+    );
+}
+
+#[test]
+fn knowledge_errors_map_to_closed_agent_codes_without_details() {
+    for (error, expected) in [
+        (
+            knowledge::KnowledgeError::InvalidRequest,
+            DefinitionError::InvalidDefinition,
+        ),
+        (
+            knowledge::KnowledgeError::LimitExceeded,
+            DefinitionError::LimitExceeded,
+        ),
+        (
+            knowledge::KnowledgeError::Unavailable,
+            DefinitionError::AdapterFailure,
+        ),
+        (
+            knowledge::KnowledgeError::ProtocolViolation,
+            DefinitionError::AdapterFailure,
+        ),
+    ] {
+        let index = ScriptedKnowledge {
+            response: Err(error),
+        };
+        assert_eq!(invoke_knowledge(&index, 64, ""), Err(expected));
+    }
+}
+
+#[test]
+fn knowledge_policy_validates_namespace_and_result_limits() {
+    let mut value = definition(&[]);
+    value.knowledge.namespace = "Upper".to_owned();
+    assert_eq!(
+        validate_definition(&value),
+        Err(DefinitionError::InvalidDefinition)
+    );
+
+    value.knowledge.namespace = "default".to_owned();
+    value.knowledge.max_results = knowledge::MAX_SEARCH_LIMIT + 1;
+    assert_eq!(
+        validate_definition(&value),
+        Err(DefinitionError::InvalidDefinition)
+    );
+
+    value.knowledge.max_results = 0;
+    assert_eq!(validate_definition(&value), Ok(()));
+    value.knowledge.enabled = true;
+    assert_eq!(
+        validate_definition(&value),
+        Err(DefinitionError::InvalidDefinition)
+    );
+}
+
+#[test]
+fn knowledge_policy_accepts_exact_enabled_and_disabled_boundaries() {
+    for (enabled, max_results, expected) in [
+        (false, 0, Ok(())),
+        (false, 1, Ok(())),
+        (false, knowledge::MAX_SEARCH_LIMIT, Ok(())),
+        (
+            false,
+            knowledge::MAX_SEARCH_LIMIT + 1,
+            Err(DefinitionError::InvalidDefinition),
+        ),
+        (true, 0, Err(DefinitionError::InvalidDefinition)),
+        (true, 1, Ok(())),
+        (true, knowledge::MAX_SEARCH_LIMIT, Ok(())),
+        (
+            true,
+            knowledge::MAX_SEARCH_LIMIT + 1,
+            Err(DefinitionError::InvalidDefinition),
+        ),
+    ] {
+        let mut value = definition(&[]);
+        value.knowledge = KnowledgePolicy {
+            enabled,
+            namespace: "valid_namespace".to_owned(),
+            max_results,
+        };
+        assert_eq!(
+            validate_definition(&value),
+            expected,
+            "enabled={enabled}, max_results={max_results}"
+        );
+    }
+
+    for namespace in ["", "Upper", "has.dot", "has space", "é"] {
+        let mut value = definition(&[]);
+        value.knowledge.namespace = namespace.to_owned();
+        assert_eq!(
+            validate_definition(&value),
+            Err(DefinitionError::InvalidDefinition),
+            "disabled policy accepted invalid namespace {namespace:?}"
+        );
+    }
+}
+
+#[test]
+fn knowledge_digest_is_sensitive_to_namespace_and_limit_but_not_tool_order() {
+    let left = definition(&["b", "a"]);
+    let mut reordered = left.clone();
+    reordered.allowed_tool_ids.reverse();
+    let tools = [
+        ToolDescriptor { id: "a".to_owned() },
+        ToolDescriptor { id: "b".to_owned() },
+    ];
+    let baseline = capability_scope_digest(&left, &tools);
+    assert_eq!(baseline, capability_scope_digest(&reordered, &tools));
+
+    let mut changed_namespace = left.clone();
+    changed_namespace.knowledge.namespace = "other".to_owned();
+    assert_ne!(
+        baseline,
+        capability_scope_digest(&changed_namespace, &tools)
+    );
+
+    let mut changed_limit = left;
+    changed_limit.knowledge.max_results = 1;
+    assert_ne!(baseline, capability_scope_digest(&changed_limit, &tools));
+}
+
+#[test]
+fn later_malformed_knowledge_call_prevents_every_earlier_effect() {
+    let mut value = definition(&["allowed"]);
+    value.knowledge = KnowledgePolicy {
+        enabled: true,
+        namespace: "configured".to_owned(),
+        max_results: 2,
+    };
+    let (provider, _) = RecordingProvider::response(ResponsePlan {
+        calls: vec![
+            ("allowed".to_owned(), r#"{"input":"first"}"#.to_owned()),
+            (
+                "factory.knowledge.search".to_owned(),
+                r#"{"query":"second","namespace":"model-selected"}"#.to_owned(),
+            ),
+        ],
+        ..ResponsePlan::default()
+    });
+    let counts = Arc::new(EffectCounts::default());
+    assert_eq!(
+        invoke(
+            value,
+            &provider,
+            &Controls::new("key"),
+            Arc::clone(&counts),
+            String::new(),
+        ),
+        Err(DefinitionError::InvalidDefinition)
+    );
+    assert_eq!(effect_count(&counts), 0);
+}
+
+#[test]
+fn denied_knowledge_ceiling_rejects_a_model_call_before_the_index() {
+    let mut value = definition(&[]);
+    value.knowledge = KnowledgePolicy {
+        enabled: true,
+        namespace: "configured".to_owned(),
+        max_results: 2,
+    };
+    let registry = registry(value);
+    let (provider, requests) = RecordingProvider::response(ResponsePlan {
+        calls: vec![(
+            "factory.knowledge.search".to_owned(),
+            r#"{"query":"attempt"}"#.to_owned(),
+        )],
+        ..ResponsePlan::default()
+    });
+    let counts = Arc::new(EffectCounts::default());
+    let tools = RecordingTools {
+        counts: Arc::clone(&counts),
+        output: String::new(),
+    };
+    let memory = RecordingMemory(Arc::clone(&counts));
+    let knowledge = RecordingKnowledge(Arc::clone(&counts));
+    let sandbox = RecordingSandbox(Arc::clone(&counts));
+    let runtime =
+        LocalAgentRuntime::new(&registry, &provider, &tools, &memory, &knowledge, &sandbox);
+    let ceiling = EffectiveCapabilityCeilingV1 {
+        allowed_tool_ids: vec![],
+        memory_enabled: false,
+        knowledge_enabled: false,
+        sandbox_execution_allowed: false,
+        communication_allowed: false,
+    };
+    assert_eq!(
+        ready(runtime.invoke_with_ceiling(
+            invocation_context(),
+            &AgentId::new("agent").expect("id"),
+            String::new(),
+            &ceiling,
+            Controls::new("key").control(),
+        )),
+        Err(DefinitionError::AdapterFailure)
+    );
+    assert!(
+        requests.lock().expect("requests")[0]
+            .tools
+            .iter()
+            .all(|(name, _)| name != "factory.knowledge.search")
+    );
+    assert_eq!(counts.knowledge_searches.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn knowledge_preflight_blocks_cancelled_or_expired_calls_before_the_index() {
+    for (cancelled, elapsed, expected) in [
+        (true, false, DefinitionError::Cancelled),
+        (false, true, DefinitionError::DeadlineExceeded),
+        (true, true, DefinitionError::Cancelled),
+    ] {
+        let controls = Controls::new("key");
+        let mut switches = vec![];
+        if cancelled {
+            switches.push(controls.cancellation_flag());
+        }
+        if elapsed {
+            switches.push(controls.deadline_flag());
+        }
+        let mut value = definition(&[]);
+        value.knowledge = KnowledgePolicy {
+            enabled: true,
+            namespace: "configured".to_owned(),
+            max_results: 2,
+        };
+        let (provider, _) = RecordingProvider::response(ResponsePlan {
+            calls: vec![(
+                "factory.knowledge.search".to_owned(),
+                r#"{"query":"exact query"}"#.to_owned(),
+            )],
+            set_after_response: switches,
+            ..ResponsePlan::default()
+        });
+        let counts = Arc::new(EffectCounts::default());
+        assert_eq!(
+            invoke(
+                value,
+                &provider,
+                &controls,
+                Arc::clone(&counts),
+                String::new(),
+            ),
+            Err(expected)
+        );
+        assert_eq!(counts.knowledge_searches.load(Ordering::SeqCst), 0);
+    }
+}
+
+fn scoped_knowledge_document(
+    tenant: &str,
+    namespace: &str,
+    document_id: &str,
+    text: &str,
+) -> knowledge::KnowledgeDocument {
+    knowledge::KnowledgeDocument::new(
+        knowledge::TenantId::new(tenant).expect("tenant"),
+        knowledge::NamespaceId::new(namespace).expect("namespace"),
+        knowledge::DocumentId::new(document_id).expect("document"),
+        text,
+    )
+    .expect("document")
+}
+
+#[test]
+fn hostile_knowledge_results_are_reduced_through_the_service_without_partial_events() {
+    let aggregate = (0..5)
+        .map(|index| {
+            scoped_knowledge_document(
+                "tenant",
+                "default",
+                &format!("doc-{index}"),
+                &"x".repeat(knowledge::MAX_DOCUMENT_TEXT_BYTES),
+            )
+        })
+        .collect::<Vec<_>>();
+    let too_many = (0..=knowledge::MAX_SEARCH_LIMIT)
+        .map(|index| {
+            scoped_knowledge_document("tenant", "default", &format!("doc-{index:03}"), "x")
+        })
+        .collect::<Vec<_>>();
+    let cases = [
+        (
+            "foreign tenant",
+            vec![scoped_knowledge_document("other", "default", "doc-a", "x")],
+            DefinitionError::AdapterFailure,
+        ),
+        (
+            "foreign namespace",
+            vec![scoped_knowledge_document("tenant", "other", "doc-a", "x")],
+            DefinitionError::AdapterFailure,
+        ),
+        (
+            "duplicate",
+            vec![
+                knowledge_document("doc-a", "x"),
+                knowledge_document("doc-a", "y"),
+            ],
+            DefinitionError::AdapterFailure,
+        ),
+        (
+            "nonascending",
+            vec![
+                knowledge_document("doc-b", "x"),
+                knowledge_document("doc-a", "y"),
+            ],
+            DefinitionError::AdapterFailure,
+        ),
+        ("too many", too_many, DefinitionError::LimitExceeded),
+        ("aggregate", aggregate, DefinitionError::LimitExceeded),
+    ];
+
+    for (case, response, expected) in cases {
+        let index = ScriptedKnowledge {
+            response: Ok(response),
+        };
+        assert_eq!(
+            invoke_knowledge_with_limit(&index, 65_536, "", knowledge::MAX_SEARCH_LIMIT),
+            Err(expected),
+            "{case} response escaped KnowledgeService validation"
+        );
+    }
+}
+
+fn invoke_knowledge_with_limit(
+    index: &impl knowledge::KnowledgeIndex,
+    max_output_bytes: u32,
+    response_text: &str,
+    max_results: u32,
+) -> Result<InvocationResult, DefinitionError> {
+    let mut value = definition(&[]);
+    value.knowledge = KnowledgePolicy {
+        enabled: true,
+        namespace: "default".to_owned(),
+        max_results,
+    };
+    value.limits.max_output_bytes = max_output_bytes;
+    let registry = registry(value);
+    let (provider, _) = RecordingProvider::response(ResponsePlan {
+        text: response_text.to_owned(),
+        calls: vec![(
+            "factory.knowledge.search".to_owned(),
+            r#"{"query":"match"}"#.to_owned(),
+        )],
+        ..ResponsePlan::default()
+    });
+    let tools = FixedToolRegistry::default();
+    let memory = InMemoryMemoryStore::default();
+    let sandbox = DenySandbox;
+    let runtime = LocalAgentRuntime::new(&registry, &provider, &tools, &memory, index, &sandbox);
+    ready(runtime.invoke(
+        invocation_context(),
+        &AgentId::new("agent").expect("id"),
+        String::new(),
+        Controls::new("knowledge-key").control(),
+    ))
 }

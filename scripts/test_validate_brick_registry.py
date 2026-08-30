@@ -812,7 +812,7 @@ status = "implemented"
 
     # ---- feature table and conditional attributes -----------------------
 
-    def test_rejects_default_feature(self) -> None:
+    def test_rejects_nonempty_default_feature(self) -> None:
         manifest = self.implemented_dir / "Cargo.toml"
         manifest.write_text(
             manifest.read_text(encoding="utf-8")
@@ -825,6 +825,30 @@ status = "implemented"
             )
         )
 
+    def test_rejects_wrong_type_default_feature(self) -> None:
+        manifest = self.implemented_dir / "Cargo.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + '\n[features]\ndefault = "mcp"\nmcp = []\n',
+            encoding="utf-8",
+        )
+        self.assert_rejected(
+            lambda: validator.validate_feature_table(
+                manifest, validator.load_toml(manifest)
+            )
+        )
+
+    def test_accepts_explicit_empty_default_feature(self) -> None:
+        manifest = self.implemented_dir / "Cargo.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + "\n[features]\ndefault = []\nmcp = []\n",
+            encoding="utf-8",
+        )
+        loaded = validator.load_toml(manifest)
+        validator.validate_feature_table(manifest, loaded)
+        self.assertEqual(validator.declared_brick_features(loaded), {"mcp"})
+
     def test_accepts_feature_table_without_a_default(self) -> None:
         manifest = self.implemented_dir / "Cargo.toml"
         manifest.write_text(
@@ -833,6 +857,12 @@ status = "implemented"
             encoding="utf-8",
         )
         validator.validate_feature_table(manifest, validator.load_toml(manifest))
+
+    def test_accepts_specified_brick_role(self) -> None:
+        package = self.package(
+            self.implemented_dir, IMPLEMENTED_FAMILY, "brick", "specified"
+        )
+        self.assertEqual(self.metadata(package)["status"], "specified")
 
     def test_rejects_conditional_attribute_on_a_domain_type(self) -> None:
         for relative_path in ("src/lib.rs", "src/model.rs"):

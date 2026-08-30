@@ -31,6 +31,7 @@ schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+knowledge = { path = "../knowledge", version = "=0.1.0", features = ["static"] }
 proptest.workspace = true
 llm-gateway = { path = "../llm-gateway", version = "=0.1.0", features = ["static"] }
 

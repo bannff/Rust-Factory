@@ -96,6 +96,7 @@ fn definition(tools: Vec<&str>) -> AgentDefinitionV1 {
         },
         knowledge: KnowledgePolicy {
             enabled: false,
+            namespace: "default".to_owned(),
             max_results: 0,
         },
         sandbox: SandboxPolicy {
@@ -147,7 +148,7 @@ fn gateway_tool_call_is_scope_checked_dispatched_and_projected() {
     ]));
     let tools = FixedToolRegistry::new([("allowed".to_owned(), "tool output".to_owned())]);
     let memory = InMemoryMemoryStore::default();
-    let knowledge = StaticKnowledgeStore::default();
+    let knowledge = knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge");
     let sandbox = DenySandbox;
     let runtime =
         LocalAgentRuntime::new(&registry, &provider, &tools, &memory, &knowledge, &sandbox);
@@ -189,7 +190,7 @@ fn reserved_memory_tool_is_agent_owned_and_strict() {
     ]));
     let tools = FixedToolRegistry::default();
     let memory = InMemoryMemoryStore::default();
-    let knowledge = StaticKnowledgeStore::default();
+    let knowledge = knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge");
     let sandbox = DenySandbox;
     let runtime =
         LocalAgentRuntime::new(&registry, &provider, &tools, &memory, &knowledge, &sandbox);
@@ -230,7 +231,7 @@ fn malformed_v1_model_reference_fails_before_provider_effect() {
     let provider = CountingProvider(Mutex::new(0));
     let tools = FixedToolRegistry::default();
     let memory = InMemoryMemoryStore::default();
-    let knowledge = StaticKnowledgeStore::default();
+    let knowledge = knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge");
     let sandbox = DenySandbox;
     let runtime =
         LocalAgentRuntime::new(&registry, &provider, &tools, &memory, &knowledge, &sandbox);
@@ -262,7 +263,7 @@ fn cancellation_and_deadline_errors_remain_distinguishable() {
         let provider = StaticProvider::error(gateway);
         let tools = FixedToolRegistry::default();
         let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
+        let knowledge = knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge");
         let sandbox = DenySandbox;
         let runtime =
             LocalAgentRuntime::new(&registry, &provider, &tools, &memory, &knowledge, &sandbox);
@@ -351,7 +352,7 @@ fn reserved_name_cannot_be_registered_as_an_ordinary_tool() {
     let provider = CountingProvider(Mutex::new(0));
     let tools = FixedToolRegistry::new([("factory.memory.recall".to_owned(), String::new())]);
     let memory = InMemoryMemoryStore::default();
-    let knowledge = StaticKnowledgeStore::default();
+    let knowledge = knowledge::r#static::StaticKnowledgeIndex::new(vec![]).expect("knowledge");
     let sandbox = DenySandbox;
     let runtime =
         LocalAgentRuntime::new(&registry, &provider, &tools, &memory, &knowledge, &sandbox);
@@ -366,4 +367,37 @@ fn reserved_name_cannot_be_registered_as_an_ordinary_tool() {
         Err(DefinitionError::InvalidReference)
     );
     assert_eq!(*provider.0.lock().expect("calls"), 0);
+}
+
+#[test]
+fn provisional_agent_knowledge_contract_is_absent_from_all_active_source() {
+    let active_source = [include_str!("../src/lib.rs"), include_str!("../src/mcp.rs")].join("\n");
+    for obsolete_identifier in ["KnowledgeRequest", "KnowledgeStore", "StaticKnowledgeStore"] {
+        assert!(
+            !active_source
+                .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .any(|token| token == obsolete_identifier),
+            "obsolete identifier remains in active Agent source: {obsolete_identifier}"
+        );
+    }
+}
+
+#[test]
+fn knowledge_is_a_normal_framework_free_dependency_and_static_is_test_only() {
+    let manifest = include_str!("../Cargo.toml");
+    let (normal, development) = manifest
+        .split_once("[dev-dependencies]")
+        .expect("Agent manifest has a dev-dependency section");
+    let normal_knowledge = normal
+        .lines()
+        .find(|line| line.starts_with("knowledge ="))
+        .expect("normal Knowledge dependency");
+    assert!(!normal_knowledge.contains("optional = true"));
+    assert!(!normal_knowledge.contains("static"));
+
+    let development_knowledge = development
+        .lines()
+        .find(|line| line.starts_with("knowledge ="))
+        .expect("test Knowledge dependency");
+    assert!(development_knowledge.contains("features = [\"static\"]"));
 }

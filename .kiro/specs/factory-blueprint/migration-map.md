@@ -13,6 +13,7 @@
 | Framework menus (UI/provider/orchestration/etc.) | bounded declarative adapter selections validated during project planning; framework code stays in named adapter/experiment crates |
 | Experiment harnesses and framework comparison | evidence-producing experiments around existing Workflow/Evaluation contracts; promotion is a separately specified projection |
 | Celery/Dagster/backend switches | defer; specify durable adapters independently |
-| Companion memory/knowledge | future Memory and Knowledge contracts |
+| Companion memory | Memory brick implemented with local and agentic adapters, settings, and MCP; no durable adapter |
+| Companion knowledge | Knowledge brick and Agent one-way migration implemented under issue #37; QA/security and final Rust SME/meta-architecture reviews approved with no Blocker or Required findings; status promotion to `implemented`, focused matrix, and `make check` complete; only issue evidence, merge, and delivery pending |
 | UI/dashboard | defer; no UI framework in core |
 | Graphs/swarms | defer until local agent/workflow contracts demonstrate need |

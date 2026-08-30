@@ -465,12 +465,19 @@ def validate_feature_table(manifest_path: Path, manifest: dict[str, Any]) -> Non
         return
     if not isinstance(features, dict):
         raise ValueError(f"{relative(manifest_path)}: invalid [features] table")
-    if "default" in features:
+    default = features.get("default", [])
+    if not isinstance(default, list) or default:
         raise ValueError(
-            f"{relative(manifest_path)}: declares a `default` feature. Adapters are "
-            "opt-in; a default feature puts framework dependencies back into every "
-            "build"
+            f"{relative(manifest_path)}: `default` must be an empty list. Adapters "
+            "are opt-in; a default feature puts framework dependencies back into "
+            "every build"
         )
+
+
+def declared_brick_features(manifest: dict[str, Any]) -> set[str]:
+    """Return declared adapter features, excluding Cargo's reserved default key."""
+    features = manifest.get("features") or {}
+    return set(features).difference({"default"})
 
 
 def attribute_occurrences(text: str, name: str) -> list[tuple[str, int]]:
@@ -860,8 +867,9 @@ def main() -> int:
             if role == "brick":
                 validate_adapter_isolation(package_dir)
                 validate_conditional_derives(package_dir)
-                features = manifest.get("features") or {}
-                brick_features[str(package["name"])] = set(features)
+                brick_features[str(package["name"])] = declared_brick_features(
+                    manifest
+                )
             if status != "scaffolded":
                 continue
             validate_status_only_placement(manifest_path, family, role)

@@ -13,7 +13,9 @@
 - [x] Implement the issue #34 async LLM Gateway migration: Agent now depends inward on `llm_gateway::LlmProvider`, and Workflow propagates one borrowed `InvocationControl` with composition-injected deadline wake mechanics. The earlier synchronous Agent-owned `ModelProvider`/`StaticModelProvider` contract is historical and superseded; no future work should use it.
 - [ ] Specify an async Sandbox port only after a concrete non-blocking adapter demonstrates the need.
 - [ ] Specify an adapter selection/planning implementation only after a demonstrated Project consumer and Rust SME design gate.
-- [ ] Extract Tool, Memory, Knowledge, or Sandbox only after a second consumer and one-way migration spec are approved.
+- [x] Complete issue #37 Knowledge implementation and extraction: bounded core/static adapter, atomic Agent migration, Workflow fixture migration, QA/security, final Rust SME/meta-architecture reviews, status promotion to `implemented`, focused Rust 1.88 validation, and `make check` are complete with no Blocker or Required findings.
+- [ ] Record issue #37 evidence, merge the implementation, and complete delivery; no merge, issue closure, or delivery is claimed yet.
+- [ ] Keep Tool, Memory, and Sandbox ownership work separate: Tool and Sandbox remain Agent-owned (with Sandbox status-only), while the Memory brick is implemented but Agent still owns its provisional `MemoryStore`; no extraction/migration is completed by issue #37.
 - [ ] Add persistent Workflow adapter with specified leases/recovery/cross-process cancellation.
 - [ ] Add Evaluation promotion/projection only after Policy and durable Workflow exist.
 - [ ] Design Edge/Mesh only after local contracts are stable.
