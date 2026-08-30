@@ -702,13 +702,8 @@ mod tests {
     fn futures_free<F: std::future::Future>(future: F) -> F::Output {
         use std::future::Future;
         use std::pin::Pin;
-        use std::task::{Context, Poll, Wake, Waker};
-        struct Noop;
-        impl Wake for Noop {
-            fn wake(self: Arc<Self>) {}
-        }
-        let waker = Waker::from(Arc::new(Noop));
-        let mut context = Context::from_waker(&waker);
+        use std::task::{Context, Poll, Waker};
+        let mut context = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
         match Pin::new(&mut future).poll(&mut context) {
             Poll::Ready(value) => value,
