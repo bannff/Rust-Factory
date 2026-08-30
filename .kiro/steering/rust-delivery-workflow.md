@@ -30,7 +30,7 @@ Use this workflow for every non-trivial brick, public API change, adapter, concu
 
 ## Decision rules
 
-- **Framework-first:** Before adding a dependency, the Rust SME must identify the concrete gap and ensure the chosen crate is contained in an adapter. Pin exact versions in Cargo manifests.
+- **Framework-first:** Before adding a dependency, the Rust SME must identify the concrete gap and ensure the chosen crate is contained in an adapter.
 - **No premature async or distribution:** Start synchronous and local. Add Tokio, workers, persistence, mesh, or CRDT adapters only for a demonstrated requirement and through core-owned traits.
 - **No false durability claims:** A local/in-memory adapter must describe its actual guarantees. Leases, recovery, cross-process cancellation, retries, and exactly-once effects require their own specified durable adapter.
 - **Approval is a gate:** `APPROVE` is required before a brick's spec is marked stable. Tests passing alone are not evidence that architecture or security requirements are met.

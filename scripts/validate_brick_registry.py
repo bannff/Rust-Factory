@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Deterministic Rust Factory brick registry validator.
+"""Deterministic Rust Factory workspace package/brick structure validator.
 
 Runs without third-party dependencies or network access and enforces that:
 
 * every workspace package declares a valid ``[package.metadata.rust-factory]``
-  record with a known family, role, and status;
+  record with a non-empty family and known role and status;
 * the workspace member list, the package directories on disk, and Cargo
   metadata agree exactly, so no package can be orphaned or unlisted;
 * packages declaring ``status = "scaffolded"`` remain genuinely status-only;
 * libraries under ``crates/`` own no binary target, and every ``role =
-  "server"`` package is a binary under ``projects/``;
-* the Living Factory Vision registry and the declared families agree in *both*
-  directions, so neither the table nor the manifests can drift.
+  "server"`` package is a binary under ``projects/``.
+
+The capability roadmap and taxonomy are tracked in GitHub issues and GitHub
+Projects. This validator deterministically enforces workspace package and brick
+structure without maintaining or cross-checking an in-repository roadmap.
 """
 
 from __future__ import annotations
@@ -27,67 +29,15 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_MANIFEST = ROOT / "Cargo.toml"
 MAKEFILE_PATH = ROOT / "Makefile"
-VISION_PATH = ROOT / ".kiro" / "steering" / "living-factory-vision.md"
 
 LIBRARY_DIR = "crates"
 BINARY_DIR = "projects"
 
-# Families that own at least one workspace package, mapped to the Vision
-# registry row label that records them.
-ACTIVE_FAMILIES = {
-    "project": "Project authoring",
-    "policy": "Policy / authorization",
-    "agent": "Agent",
-    "workflow": "Workflow",
-    "evaluation": "Evaluation",
-    "model-gateway": "Model gateway",
-    "memory": "Memory",
-    "sandbox": "Sandbox",
-    "observability": "Observability / audit",
-    "mcp-transport": "MCP transport",
-}
-
-# Capability families committed in the registry with a named future crate but
-# deliberately without a package until a demonstrated consumer drives them.
-# A registry row is the parking space; an empty crate is not.
-DEFERRED_FAMILIES = {
-    "workspace-governance": "Workspace governance",
-    "identity": "Identity / authentication",
-    "knowledge": "Knowledge",
-    "verification": "Verification",
-    "message-bus": "Message bus / events",
-    "cache": "Cache",
-    "graph": "Graph / provenance",
-    "notification": "Notification",
-}
-
-# Active families whose only package is still a status-only core tree.
+# Families whose only package is still a status-only core tree. This is a
+# structural placement rule — a scaffolded package must be a status-only core
+# under its canonical path — not a roadmap: the capability taxonomy lives in
+# GitHub, not here.
 STATUS_ONLY_FAMILIES = frozenset({"model-gateway", "sandbox"})
-
-# Registry rows carrying this taxonomy describe a capability family. Every
-# other taxonomy is adapter infrastructure, a composition base, or an optional
-# domain pack, none of which own a capability core. The set is closed so a
-# mistyped taxonomy cannot silently opt a row out of the reverse check.
-CAPABILITY_TAXONOMY = "Capability"
-VALID_TAXONOMIES = frozenset(
-    {
-        CAPABILITY_TAXONOMY,
-        "Adapter infrastructure",
-        "Composition bases",
-        "Optional capability/domain pack",
-        "Optional domain packs",
-    }
-)
-
-# The registry table is the one immediately following this heading. Scoping the
-# parser keeps an unrelated table elsewhere in the document out of the registry
-# namespace.
-REGISTRY_HEADING = "## Brick portfolio registry"
-
-# Recorded-state keywords. A state cell is required to *begin* with its keyword
-# so prose later in the cell cannot satisfy the check by accident.
-STATE_SCAFFOLDED = "Scaffolded"
-STATE_DEFERRED = "Deferred"
 
 # Defensive ceiling on any single file this validator reads.
 MAX_READ_BYTES = 1 << 20
@@ -123,8 +73,11 @@ ADAPTER_MODULES = {
     "anyhow": frozenset({"mcp"}),
     "cap_std": frozenset({"fs"}),
     "agentic_memory": frozenset({"agentic"}),
+    "redb": frozenset({"redb"}),
     "opentelemetry": frozenset({"opentelemetry"}),
     "serdes_ai_evals": frozenset({"serdes_ai_evals"}),
+    "biscuit_auth": frozenset({"biscuit"}),
+    "prost": frozenset({"biscuit"}),
 }
 
 # Every module name a brick may feature gate. A superset of ADAPTER_MODULES'
@@ -147,9 +100,11 @@ ADAPTER_MODULE_NAMES = frozenset(
         "fs",
         "agentic",
         "local",
+        "redb",
         "settings",
         "opentelemetry",
         "serdes_ai_evals",
+        "biscuit",
     }
 )
 VALID_STATUSES = {
@@ -237,7 +192,14 @@ def relative(path: Path) -> str:
 def cargo_packages() -> list[dict[str, Any]]:
     """Returns every workspace package as reported by Cargo."""
     result = subprocess.run(
-        ["cargo", "metadata", "--format-version=1", "--no-deps", "--offline"],
+        [
+            "cargo",
+            "metadata",
+            "--locked",
+            "--format-version=1",
+            "--no-deps",
+            "--offline",
+        ],
         cwd=ROOT,
         capture_output=True,
         check=False,
@@ -283,10 +245,9 @@ def factory_metadata(package: dict[str, Any], manifest_path: Path) -> dict[str, 
     family = factory["family"]
     role = factory["role"]
     status = factory["status"]
-    if family not in ACTIVE_FAMILIES:
+    if not isinstance(family, str) or not family:
         raise ValueError(
-            f"{relative(manifest_path)}: family {family!r} is not an active registry "
-            "family; add a Vision registry row and declare it before shipping a package"
+            f"{relative(manifest_path)}: family must be a non-empty string"
         )
     if role not in VALID_ROLES:
         raise ValueError(f"{relative(manifest_path)}: unknown role {role!r}")
@@ -734,8 +695,8 @@ def validate_quality_gate_coverage(brick_features: dict[str, set[str]]) -> None:
     Adapters are feature gated, so a workspace-wide command compiles only the
     cores. That makes the Makefile's enumerations load-bearing: a brick or
     feature missing from them is code that is never linted, never tested, and
-    never isolation-checked, with a green `make check`. This is the same reason
-    the registry keeps an independent second statement of the family set.
+    never isolation-checked, with a green `make check`. The validator therefore
+    checks this local build inventory without treating it as a roadmap taxonomy.
     """
     makefile = MAKEFILE_PATH
     if not makefile.is_file():
@@ -864,192 +825,10 @@ def validate_workspace_inventory(packages: list[dict[str, Any]]) -> None:
         )
 
 
-def registry_table_lines() -> list[str]:
-    """Returns the pipe-delimited lines of the registry table only.
-
-    Scanning starts at the registry heading and stops at the next heading, so a
-    table elsewhere in the document cannot join the registry namespace.
-    """
-    lines = read_bounded(VISION_PATH).splitlines()
-    try:
-        start = next(
-            index
-            for index, line in enumerate(lines)
-            if line.strip() == REGISTRY_HEADING
-        )
-    except StopIteration as error:
-        raise ValueError(
-            f"{relative(VISION_PATH)}: missing {REGISTRY_HEADING!r} heading"
-        ) from error
-    table: list[str] = []
-    for line in lines[start + 1 :]:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            break
-        if stripped.startswith("|"):
-            table.append(stripped)
-        elif table:
-            # The table ended; ignore trailing prose in the same section.
-            break
-    if not table:
-        raise ValueError(f"{relative(VISION_PATH)}: registry table not found")
-    return table
-
-
-def registry_rows() -> dict[str, dict[str, str]]:
-    """Parses the Vision registry table into ``label -> row`` records."""
-    rows: dict[str, dict[str, str]] = {}
-    for stripped in registry_table_lines():
-        cells = [cell.strip() for cell in stripped.split("|")[1:-1]]
-        label = cells[0].strip() if cells else ""
-        if label == "Family" or (label and set(label) <= {"-", ":"}):
-            continue
-        if len(cells) != 5:
-            raise ValueError(
-                f"{relative(VISION_PATH)}: registry row {label!r} has {len(cells)} "
-                "cells; expected 5. A cell may not contain a pipe character"
-            )
-        label, taxonomy, owner, _mature, state = cells
-        if not label:
-            raise ValueError(f"{relative(VISION_PATH)}: registry row without a family")
-        if taxonomy not in VALID_TAXONOMIES:
-            raise ValueError(
-                f"{relative(VISION_PATH)}: registry row {label!r} has unknown taxonomy "
-                f"{taxonomy!r}"
-            )
-        if label in rows:
-            raise ValueError(
-                f"{relative(VISION_PATH)}: duplicate registry row {label!r}"
-            )
-        rows[label] = {"taxonomy": taxonomy, "owner": owner, "state": state}
-    if not rows:
-        raise ValueError(f"{relative(VISION_PATH)}: no registry rows found")
-    return rows
-
-
-def validate_declared_families() -> dict[str, str]:
-    """Checks the declared family sets are disjoint and uniquely labelled."""
-    overlap = sorted(set(ACTIVE_FAMILIES).intersection(DEFERRED_FAMILIES))
-    if overlap:
-        raise ValueError(
-            f"a family cannot be both active and deferred: {', '.join(overlap)}"
-        )
-    known = {**ACTIVE_FAMILIES, **DEFERRED_FAMILIES}
-    labels: dict[str, str] = {}
-    for family, label in known.items():
-        if label in labels:
-            raise ValueError(
-                f"families {labels[label]!r} and {family!r} share the registry label "
-                f"{label!r}; labels must be unique"
-            )
-        labels[label] = family
-    undeclared = sorted(STATUS_ONLY_FAMILIES.difference(ACTIVE_FAMILIES))
-    if undeclared:
-        raise ValueError(
-            f"status-only families must also be active: {', '.join(undeclared)}"
-        )
-    return known
-
-
-def validate_registry(
-    declared_statuses: dict[str, set[str]], owned_names: dict[str, set[str]]
-) -> None:
-    known = validate_declared_families()
-    rows = registry_rows()
-
-    # Forward: every declared family is recorded in the registry, its recorded
-    # state agrees with what its packages declare, and its owner cell names a
-    # crate that actually exists.
-    for family, label in known.items():
-        row = rows.get(label)
-        if row is None:
-            raise ValueError(
-                f"{relative(VISION_PATH)}: missing registry row {label!r} for family "
-                f"{family!r}"
-            )
-        if family in DEFERRED_FAMILIES:
-            if f"`{family}`" not in row["owner"]:
-                raise ValueError(
-                    f"{relative(VISION_PATH)}: deferred family {family!r} must name "
-                    f"its future owning crate `{family}`"
-                )
-            if not row["state"].startswith(STATE_DEFERRED):
-                raise ValueError(
-                    f"{relative(VISION_PATH)}: deferred family {family!r} must be "
-                    f"recorded as {STATE_DEFERRED}"
-                )
-            continue
-
-        owned = owned_names.get(family, set())
-        if not any(f"`{name}`" in row["owner"] for name in owned):
-            raise ValueError(
-                f"{relative(VISION_PATH)}: family {family!r} must name one of its "
-                f"packages ({', '.join(sorted(owned)) or 'none'}) in its owning-crate "
-                "cell"
-            )
-        statuses = declared_statuses.get(family, set())
-        if family in STATUS_ONLY_FAMILIES:
-            if statuses != {"scaffolded"}:
-                raise ValueError(
-                    f"family {family!r} is recorded as status-only but its packages "
-                    f"declare {sorted(statuses)}; a status-only family declares only "
-                    "'scaffolded'"
-                )
-            if not row["state"].startswith(STATE_SCAFFOLDED):
-                raise ValueError(
-                    f"{relative(VISION_PATH)}: status-only family {family!r} must be "
-                    f"recorded as {STATE_SCAFFOLDED}"
-                )
-        else:
-            if "scaffolded" in statuses:
-                raise ValueError(
-                    f"family {family!r} declares a scaffolded package but is not "
-                    "recorded as a status-only family"
-                )
-            if row["state"].startswith(STATE_SCAFFOLDED):
-                raise ValueError(
-                    f"{relative(VISION_PATH)}: family {family!r} is recorded as "
-                    f"{STATE_SCAFFOLDED} but declares {sorted(statuses)}"
-                )
-
-    # Reverse: every capability row in the registry is a declared family.
-    labels = set(known.values())
-    for label, row in rows.items():
-        if row["taxonomy"] != CAPABILITY_TAXONOMY:
-            continue
-        if label not in labels:
-            raise ValueError(
-                f"{relative(VISION_PATH)}: capability row {label!r} matches no declared "
-                "family; declare it or change its taxonomy"
-            )
-
-    # Deferred families own no package and no directory.
-    for family in DEFERRED_FAMILIES:
-        if family in declared_statuses:
-            raise ValueError(
-                f"family {family!r} is recorded as deferred but owns a package"
-            )
-        package_dir = ROOT / LIBRARY_DIR / f"{family}"
-        if package_dir.exists():
-            raise ValueError(
-                f"{relative(package_dir)}: deferred families own no package directory"
-            )
-
-    # Active families own at least one package.
-    for family in ACTIVE_FAMILIES:
-        if family not in declared_statuses:
-            raise ValueError(
-                f"family {family!r} is recorded as active but owns no package; move it "
-                "to the deferred set or ship its package"
-            )
-
-
 def main() -> int:
     try:
         packages = cargo_packages()
         validate_workspace_inventory(packages)
-        declared_statuses: dict[str, set[str]] = {}
-        owned_names: dict[str, set[str]] = {}
         brick_features: dict[str, set[str]] = {}
         for package in packages:
             manifest_path = Path(package["manifest_path"]).resolve()
@@ -1057,9 +836,14 @@ def main() -> int:
             family = factory["family"]
             role = factory["role"]
             status = factory["status"]
-            declared_statuses.setdefault(family, set()).add(status)
+            if family in STATUS_ONLY_FAMILIES and (
+                role != "core" or status != "scaffolded"
+            ):
+                raise ValueError(
+                    f"{relative(manifest_path)}: status-only family {family!r} must "
+                    'declare role = "core" and status = "scaffolded"'
+                )
             validate_package_name(package, manifest_path, family, role)
-            owned_names.setdefault(family, set()).add(str(package["name"]))
             validate_location_and_targets(package, manifest_path, role)
             package_dir = package_directory(manifest_path)
             manifest = load_toml(manifest_path)
@@ -1075,15 +859,16 @@ def main() -> int:
             validate_package_tree(package_dir)
             validate_manifest_configuration(manifest_path, load_toml(manifest_path))
             validate_source_content(package_dir)
-        validate_registry(declared_statuses, owned_names)
         validate_quality_gate_coverage(brick_features)
     except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
-        print(f"Brick registry validation failed: {error}", file=sys.stderr)
+        print(
+            f"Workspace package/brick structure validation failed: {error}",
+            file=sys.stderr,
+        )
         return 1
     print(
-        f"Brick registry validation passed "
-        f"({len(ACTIVE_FAMILIES)} active families, "
-        f"{len(DEFERRED_FAMILIES)} deferred)."
+        f"Workspace package/brick structure validation passed "
+        f"({len(packages)} workspace packages checked)."
     )
     return 0
 

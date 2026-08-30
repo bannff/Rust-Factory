@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Brick Agent Onboarding",
+      "trigger": "SessionStart",
+      "description": "Reminds each new session of the one-brick-per-agent coordination rules for parallel scaffolding.",
+      "action": {
+        "type": "agent",
+        "prompt": "If this session will scaffold or modify a brick: first confirm that its own GitHub issue and GitHub Projects roadmap entry identify the family and intended owning crate. Then claim exactly one crates/<brick>/ folder and stay in it. Do not touch setup-owned root Cargo.toml workspace members, Makefile quality-matrix lines, scripts/validate_brick_registry.py adapter mappings/status-only allowlist, or matching validator tests unless you are the designated setup agent. See .kiro/steering/multi-agent-coordination.md."
+      }
+    }
+  ]
+}

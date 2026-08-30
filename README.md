@@ -16,6 +16,8 @@ schema, error-framework, filesystem, or async-runtime dependency.
 | `crates/evaluation` | `local`, `memory`, `mcp`, `serdes-ai-evals`, `settings` | Framework-backed immutable evaluation over terminal Workflow evidence, with selectable deterministic executors and bounded process-local result storage. Composition-ready; not runnable or project-ready until [#16] supplies the evidence bridge and composition proof. |
 | `crates/project` | `mcp`, `fs` | Blueprint validation, generation planning, and root-confined materialization. |
 | `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. No MCP surface, by design. |
+| `crates/auth` | `biscuit` | **Implemented.** Token-native synchronous authorization with identity derived from direct verified-authority facts and bounded opaque deny behavior. No MCP, Policy migration, revocation, audit, or process-boundary guarantee; composition owns private keys and blocking scheduling. |
+| `crates/storage` | `local`, `redb`, `settings` | Bounded authoritative tenant- and namespace-scoped versioned objects, with a volatile local adapter and an `ImmediateCommit` redb adapter. No consumer migration or MCP surface in V1. |
 | `crates/memory` | `local`, `agentic`, `settings`, `mcp` | Tenant-scoped agent memory behind one framework-agnostic port. Two selectable backends and a five-tool agent surface; no durable adapter. |
 | `crates/observability` | `local`, `opentelemetry`, `settings`, `mcp` | Bounded tenant-scoped operational logs with an evicting process-local reader, metadata-only OpenTelemetry API submission, and Policy-gated inspection; no durable audit/evidence guarantee. |
 | `crates/{model-gateway,sandbox}` | — | Status-only scaffolds for the families the autonomous loop drives next; their provisional ports still live in `agent`. |
@@ -42,9 +44,24 @@ module names no adapter keeps applying to it.
 
 `policy` has no MCP surface deliberately. It decides what an agent is permitted
 to do, so exposing it to agents would be a privilege-escalation seam whichever
-tools were chosen. Every other operable brick is agent-drivable.
+tools were chosen. Storage also deliberately has no MCP surface in V1: exposing
+raw object CRUD would bypass each consuming capability's serialization and
+domain rules. Agent-driven surfaces are therefore capability-specific, not a
+blanket requirement for every operable brick.
 
-Every package declares `family`, `role`, and `status` in `[package.metadata.rust-factory]`, and the [Vision portfolio registry](.kiro/steering/living-factory-vision.md#brick-portfolio-registry) is the family-level source of truth. Capabilities that are committed but not yet driven by a consumer — workspace governance, identity, knowledge, verification, message bus, cache, graph, notification — are registry rows naming a future crate rather than empty packages, so a new concern always has a designated home without shipping code that does nothing. `make check` enforces registry and metadata agreement in both directions.
+Storage retains authoritative versioned objects and never evicts them to recover
+capacity. Cache remains a separate, deferred, non-authoritative capability whose
+data may be evicted without violating correctness. No Agent or Evaluation
+consumer has migrated to Storage. Composition owns configuration source and
+adapter selection, plus the trusted redb path and parent directory, path/symlink
+and TOCTOU policy, locking/open behavior, backup, lifecycle, and shutdown.
+
+Every package declares `family`, `role`, and `status` in
+`[package.metadata.rust-factory]`. The capability roadmap and taxonomy live in
+GitHub issue #11 and GitHub Projects; the Vision records architecture rather
+than a registry table. The local validator checks workspace membership, package
+metadata and placement, status-only package shape, targets, and adapter
+isolation; `make check` runs those checks with the feature-matrix quality gate.
 
 ## Repository layout
 

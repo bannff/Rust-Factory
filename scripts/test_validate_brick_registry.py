@@ -1,4 +1,4 @@
-"""Deterministic negative self-tests for the brick registry validator.
+"""Deterministic self-tests for the workspace package/brick structure validator.
 
 Every fixture uses synthetic family names and a temporary repository root, so
 the suite never depends on which real families happen to exist.
@@ -12,23 +12,17 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT_PATH = Path(__file__).with_name("validate_brick_registry.py")
-SPEC = importlib.util.spec_from_file_location("brick_registry_validator", SCRIPT_PATH)
+SPEC = importlib.util.spec_from_file_location("workspace_structure_validator", SCRIPT_PATH)
 if SPEC is None or SPEC.loader is None:
-    raise RuntimeError("could not load the brick registry validator")
+    raise RuntimeError("could not load the workspace package/brick structure validator")
 validator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validator)
 
 STATUS_ONLY_FAMILY = "widget"
 IMPLEMENTED_FAMILY = "gadget"
-DEFERRED_FAMILY = "sprocket"
-
-ACTIVE_FAMILIES = {
-    STATUS_ONLY_FAMILY: "Widget",
-    IMPLEMENTED_FAMILY: "Gadget",
-}
-DEFERRED_FAMILIES = {DEFERRED_FAMILY: "Sprocket"}
 
 SCAFFOLD_SOURCES = {
     "src/lib.rs": (
@@ -44,7 +38,7 @@ SCAFFOLD_SOURCES = {
 }
 
 
-class BrickRegistryValidatorTests(unittest.TestCase):
+class WorkspacePackageBrickStructureValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
@@ -54,18 +48,12 @@ class BrickRegistryValidatorTests(unittest.TestCase):
                 "ROOT",
                 "ROOT_MANIFEST",
                 "MAKEFILE_PATH",
-                "VISION_PATH",
-                "ACTIVE_FAMILIES",
-                "DEFERRED_FAMILIES",
                 "STATUS_ONLY_FAMILIES",
             )
         }
         validator.ROOT = self.root
         validator.ROOT_MANIFEST = self.root / "Cargo.toml"
         validator.MAKEFILE_PATH = self.root / "Makefile"
-        validator.VISION_PATH = self.root / "living-factory-vision.md"
-        validator.ACTIVE_FAMILIES = dict(ACTIVE_FAMILIES)
-        validator.DEFERRED_FAMILIES = dict(DEFERRED_FAMILIES)
         validator.STATUS_ONLY_FAMILIES = frozenset({STATUS_ONLY_FAMILY})
         # Registered before any fixture is written so a fixture failure cannot
         # leak patched globals into later tests.
@@ -75,7 +63,6 @@ class BrickRegistryValidatorTests(unittest.TestCase):
         self.scaffold_dir = self.root / f"crates/{STATUS_ONLY_FAMILY}"
         self.implemented_dir = self.root / f"crates/{IMPLEMENTED_FAMILY}"
         self.write_valid_workspace()
-        self.write_valid_registry()
         self.write_valid_scaffold()
         self.write_valid_implemented()
         self.write_valid_makefile()
@@ -96,21 +83,6 @@ class BrickRegistryValidatorTests(unittest.TestCase):
         validator.ROOT_MANIFEST.write_text(
             f"[workspace]\nmembers = [\n{rendered}\n]\n", encoding="utf-8"
         )
-
-    def write_valid_registry(self, extra: str = "") -> None:
-        rows = [
-            validator.REGISTRY_HEADING,
-            "",
-            "| Family | Taxonomy | Owning crate | Mature shape | Current state |",
-            "|---|---|---|---|---|",
-            f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |",
-            f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}` | core | Implemented |",
-            f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
-        ]
-        document = "\n".join(rows) + "\n"
-        if extra:
-            document += extra if extra.endswith("\n") else extra + "\n"
-        validator.VISION_PATH.write_text(document, encoding="utf-8")
 
     def write_valid_makefile(
         self, bricks: str = IMPLEMENTED_FAMILY, recipes: str = ""
@@ -202,28 +174,6 @@ status = "implemented"
             ),
         ]
 
-    def valid_statuses(self) -> dict[str, set[str]]:
-        return {
-            STATUS_ONLY_FAMILY: {"scaffolded"},
-            IMPLEMENTED_FAMILY: {"implemented"},
-        }
-
-    def valid_owned_names(self) -> dict[str, set[str]]:
-        return {
-            STATUS_ONLY_FAMILY: {f"{STATUS_ONLY_FAMILY}"},
-            IMPLEMENTED_FAMILY: {f"{IMPLEMENTED_FAMILY}"},
-        }
-
-    def check_registry(
-        self,
-        statuses: dict[str, set[str]] | None = None,
-        owned: dict[str, set[str]] | None = None,
-    ) -> None:
-        validator.validate_registry(
-            self.valid_statuses() if statuses is None else statuses,
-            self.valid_owned_names() if owned is None else owned,
-        )
-
     def run_main(self, packages: list[dict[str, object]] | None = None) -> int:
         """Drives main() end to end with cargo metadata stubbed and output captured."""
         supplied = self.valid_packages() if packages is None else packages
@@ -262,7 +212,29 @@ status = "implemented"
         validator.validate_manifest_configuration(
             self.scaffold_manifest(), validator.load_toml(self.scaffold_manifest())
         )
-        self.check_registry()
+
+    def test_cargo_metadata_is_locked_and_offline(self) -> None:
+        with patch.object(validator.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = '{"packages": []}'
+            run.return_value.stderr = ""
+
+            self.assertEqual(validator.cargo_packages(), [])
+
+        run.assert_called_once_with(
+            [
+                "cargo",
+                "metadata",
+                "--locked",
+                "--format-version=1",
+                "--no-deps",
+                "--offline",
+            ],
+            cwd=validator.ROOT,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
 
     # ---- metadata record -------------------------------------------------
 
@@ -289,9 +261,8 @@ status = "implemented"
         package["metadata"]["rust-factory"]["guarantees"] = "durable"
         self.assert_rejected(lambda: self.metadata(package))
 
-    def test_rejects_unknown_family_role_and_status(self) -> None:
+    def test_rejects_unknown_role_and_status(self) -> None:
         cases = (
-            ("unregistered", "core", "implemented"),
             (IMPLEMENTED_FAMILY, "unknown", "implemented"),
             (IMPLEMENTED_FAMILY, "core", "unknown"),
         )
@@ -300,6 +271,23 @@ status = "implemented"
                 package = self.package(
                     self.implemented_dir, family, role, status
                 )
+                self.assert_rejected(lambda: self.metadata(package))
+
+    def test_accepts_arbitrary_nonempty_family(self) -> None:
+        """The roadmap taxonomy lives in GitHub, not here, so any non-empty
+        family string is accepted; only structure is enforced."""
+        package = self.package(
+            self.implemented_dir, "some-new-family", "brick", "implemented"
+        )
+        self.assertEqual(self.metadata(package)["family"], "some-new-family")
+
+    def test_rejects_empty_or_non_string_family(self) -> None:
+        for value in ("", 123):
+            with self.subTest(value=value):
+                package = self.package(
+                    self.implemented_dir, IMPLEMENTED_FAMILY, "brick", "implemented"
+                )
+                package["metadata"]["rust-factory"]["family"] = value
                 self.assert_rejected(lambda: self.metadata(package))
 
     # ---- status-only placement ------------------------------------------
@@ -605,178 +593,6 @@ status = "implemented"
             )
         )
 
-    # ---- registry agreement ---------------------------------------------
-
-    def test_rejects_missing_registry_row(self) -> None:
-        registry = validator.VISION_PATH.read_text(encoding="utf-8")
-        validator.VISION_PATH.write_text(
-            registry.replace(
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
-                "",
-            ),
-            encoding="utf-8",
-        )
-        self.assert_rejected(
-            lambda: self.check_registry()
-        )
-
-    def test_rejects_capability_row_matching_no_declared_family(self) -> None:
-        with validator.VISION_PATH.open("a", encoding="utf-8") as registry:
-            registry.write("| Ratchet | Capability | `ratchet-core` | core | Deferred |\n")
-        self.assert_rejected(
-            lambda: self.check_registry()
-        )
-
-    def test_accepts_non_capability_row_without_declared_family(self) -> None:
-        with validator.VISION_PATH.open("a", encoding="utf-8") as registry:
-            registry.write(
-                "| Storage | Adapter infrastructure | No crate | ports | Prohibited |\n"
-            )
-        self.check_registry()
-
-    def test_rejects_duplicate_registry_row(self) -> None:
-        with validator.VISION_PATH.open("a", encoding="utf-8") as registry:
-            registry.write(
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |\n"
-            )
-        self.assert_rejected(validator.registry_rows)
-
-    def test_rejects_deferred_family_without_named_crate(self) -> None:
-        registry = validator.VISION_PATH.read_text(encoding="utf-8")
-        validator.VISION_PATH.write_text(
-            registry.replace(f"`{DEFERRED_FAMILY}`", "none"), encoding="utf-8"
-        )
-        self.assert_rejected(
-            lambda: self.check_registry()
-        )
-
-    def test_rejects_deferred_family_not_recorded_as_deferred(self) -> None:
-        registry = validator.VISION_PATH.read_text(encoding="utf-8")
-        validator.VISION_PATH.write_text(
-            registry.replace(
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Implemented |",
-            ),
-            encoding="utf-8",
-        )
-        self.assert_rejected(
-            lambda: self.check_registry()
-        )
-
-    def test_rejects_status_only_family_not_recorded_as_scaffolded(self) -> None:
-        registry = validator.VISION_PATH.read_text(encoding="utf-8")
-        validator.VISION_PATH.write_text(
-            registry.replace(
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |",
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Implemented |",
-            ),
-            encoding="utf-8",
-        )
-        self.assert_rejected(
-            lambda: self.check_registry()
-        )
-
-    def test_rejects_deferred_family_owning_a_package(self) -> None:
-        statuses = self.valid_statuses()
-        statuses[DEFERRED_FAMILY] = {"implemented"}
-        self.assert_rejected(lambda: self.check_registry(statuses))
-
-    def test_rejects_deferred_family_with_package_directory(self) -> None:
-        (self.root / f"crates/{DEFERRED_FAMILY}").mkdir(parents=True)
-        self.assert_rejected(
-            lambda: self.check_registry()
-        )
-
-    def test_rejects_active_family_without_a_package(self) -> None:
-        statuses = self.valid_statuses()
-        del statuses[IMPLEMENTED_FAMILY]
-        self.assert_rejected(lambda: self.check_registry(statuses))
-
-    def test_rejects_scaffolded_status_for_non_status_only_declared_family(self) -> None:
-        statuses = self.valid_statuses()
-        statuses[IMPLEMENTED_FAMILY] = {"scaffolded"}
-        self.assert_rejected(lambda: self.check_registry(statuses))
-
-    def test_rejects_family_declared_both_active_and_deferred(self) -> None:
-        validator.DEFERRED_FAMILIES = {
-            **DEFERRED_FAMILIES,
-            IMPLEMENTED_FAMILY: "Gadget",
-        }
-        self.assert_rejected(
-            lambda: self.check_registry()
-        )
-
-    def test_rejects_families_sharing_a_registry_label(self) -> None:
-        validator.ACTIVE_FAMILIES = {**ACTIVE_FAMILIES, "extra": "Gadget"}
-        self.assert_rejected(validator.validate_declared_families)
-
-    def test_rejects_status_only_family_absent_from_active_set(self) -> None:
-        validator.STATUS_ONLY_FAMILIES = frozenset({STATUS_ONLY_FAMILY, "absent"})
-        self.assert_rejected(validator.validate_declared_families)
-
-    def test_rejects_owning_crate_cell_naming_no_owned_package(self) -> None:
-        self.assert_rejected(
-            lambda: self.check_registry(
-                owned={
-                    STATUS_ONLY_FAMILY: {f"{STATUS_ONLY_FAMILY}"},
-                    IMPLEMENTED_FAMILY: {f"{IMPLEMENTED_FAMILY}-mcp"},
-                }
-            )
-        )
-
-    def test_rejects_implemented_family_recorded_as_scaffolded(self) -> None:
-        self.write_valid_registry()
-        registry = validator.VISION_PATH.read_text(encoding="utf-8")
-        validator.VISION_PATH.write_text(
-            registry.replace(
-                f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}` | core | Implemented |",
-                f"| Gadget | Capability | `{IMPLEMENTED_FAMILY}` | core | Scaffolded |",
-            ),
-            encoding="utf-8",
-        )
-        self.assert_rejected(lambda: self.check_registry())
-
-    def test_rejects_state_keyword_that_is_not_leading(self) -> None:
-        registry = validator.VISION_PATH.read_text(encoding="utf-8")
-        validator.VISION_PATH.write_text(
-            registry.replace(
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | Scaffolded |",
-                f"| Widget | Capability | `{STATUS_ONLY_FAMILY}` | core | "
-                "No longer Scaffolded; fully Implemented |",
-            ),
-            encoding="utf-8",
-        )
-        self.assert_rejected(lambda: self.check_registry())
-
-    def test_rejects_malformed_registry_row(self) -> None:
-        self.write_valid_registry(
-            extra="| Ratchet | Capability | `ratchet-core` | a | b | Deferred |"
-        )
-        self.assert_rejected(validator.registry_rows)
-
-    def test_rejects_unknown_registry_taxonomy(self) -> None:
-        self.write_valid_registry(
-            extra="| Ratchet | capability | `ratchet-core` | core | Deferred |"
-        )
-        self.assert_rejected(validator.registry_rows)
-
-    def test_rejects_missing_registry_heading(self) -> None:
-        validator.VISION_PATH.write_text("no heading here\n", encoding="utf-8")
-        self.assert_rejected(validator.registry_rows)
-
-    def test_ignores_tables_outside_the_registry_section(self) -> None:
-        self.write_valid_registry(
-            extra=(
-                "\n## Some other section\n\n"
-                "| Family | Taxonomy | Owning crate | Mature shape | Current state |\n"
-                "|---|---|---|---|---|\n"
-                "| Widget | Capability | `elsewhere` | core | Deferred |\n"
-            )
-        )
-        rows = validator.registry_rows()
-        self.assertEqual(sorted(rows), ["Gadget", "Sprocket", "Widget"])
-        self.assertIn(f"`{STATUS_ONLY_FAMILY}`", rows["Widget"]["owner"])
-
     # ---- package naming --------------------------------------------------
 
     def test_rejects_package_name_not_matching_directory(self) -> None:
@@ -898,6 +714,41 @@ status = "implemented"
                 )
                 validator.validate_adapter_isolation(self.implemented_dir)
                 path.unlink()
+
+    def test_biscuit_auth_is_accepted_only_in_biscuit(self) -> None:
+        path = self.write_brick_source(
+            "src/biscuit.rs", "use biscuit_auth::Biscuit;\n"
+        )
+        validator.validate_adapter_isolation(self.implemented_dir)
+        path.unlink()
+
+        path = self.write_brick_source("src/mcp.rs", "use biscuit_auth::Biscuit;\n")
+        self.assert_rejected(
+            lambda: validator.validate_adapter_isolation(self.implemented_dir)
+        )
+        path.unlink()
+
+    def test_prost_is_accepted_only_in_biscuit(self) -> None:
+        path = self.write_brick_source("src/biscuit.rs", "use prost::Message;\n")
+        validator.validate_adapter_isolation(self.implemented_dir)
+        path.unlink()
+
+        path = self.write_brick_source("src/mcp.rs", "use prost::Message;\n")
+        self.assert_rejected(
+            lambda: validator.validate_adapter_isolation(self.implemented_dir)
+        )
+        path.unlink()
+
+    def test_redb_is_accepted_only_in_redb(self) -> None:
+        path = self.write_brick_source("src/redb.rs", "use redb::Database;\n")
+        validator.validate_adapter_isolation(self.implemented_dir)
+        path.unlink()
+
+        path = self.write_brick_source("src/local.rs", "use redb::Database;\n")
+        self.assert_rejected(
+            lambda: validator.validate_adapter_isolation(self.implemented_dir)
+        )
+        path.unlink()
 
     def test_rejects_adapter_dependency_outside_its_module(self) -> None:
         cases = (
@@ -1148,10 +999,10 @@ status = "implemented"
         self.assertEqual(self.run_main(), 0)
 
     def test_main_rejects_status_only_family_declaring_another_status(self) -> None:
-        """The escape hatch: main() skips scaffold checks for other statuses."""
+        """A status-only family cannot bypass its fixed structure by relabeling."""
         packages = [
             self.package(
-                self.scaffold_dir, STATUS_ONLY_FAMILY, "core", "implemented"
+                self.scaffold_dir, STATUS_ONLY_FAMILY, "brick", "implemented"
             ),
             self.package(
                 self.implemented_dir, IMPLEMENTED_FAMILY, "brick", "implemented"
@@ -1159,9 +1010,9 @@ status = "implemented"
         ]
         manifest = self.scaffold_manifest()
         manifest.write_text(
-            manifest.read_text(encoding="utf-8").replace(
-                'status = "scaffolded"', 'status = "implemented"'
-            )
+            manifest.read_text(encoding="utf-8")
+            .replace('role = "core"', 'role = "brick"')
+            .replace('status = "scaffolded"', 'status = "implemented"')
             + '\n[dependencies]\nserde = "1"\n',
             encoding="utf-8",
         )
@@ -1181,17 +1032,6 @@ status = "implemented"
         (self.scaffold_dir / "src/model.rs").unlink()
         self.assertEqual(self.run_main(), 1)
 
-    def test_main_rejects_registry_disagreement(self) -> None:
-        registry = validator.VISION_PATH.read_text(encoding="utf-8")
-        validator.VISION_PATH.write_text(
-            registry.replace(
-                f"| Sprocket | Capability | `{DEFERRED_FAMILY}` | core | Deferred |",
-                "",
-            ),
-            encoding="utf-8",
-        )
-        self.assertEqual(self.run_main(), 1)
-
     def test_main_rejects_binary_target_under_crates(self) -> None:
         packages = [
             self.package(
@@ -1208,7 +1048,7 @@ status = "implemented"
         self.assertEqual(self.run_main(packages), 1)
 
     def test_main_reports_failure_without_raising(self) -> None:
-        validator.VISION_PATH.unlink()
+        validator.ROOT_MANIFEST.unlink()
         self.assertEqual(self.run_main(), 1)
 
     def test_rejects_nested_manifest_hidden_below_a_package(self) -> None:
