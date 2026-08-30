@@ -46,15 +46,10 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        task::{Context, Poll, Wake, Waker},
+        task::{Context, Poll},
     };
 
     use super::*;
-
-    struct NoopWake;
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
 
     struct Counted<T> {
         polls: Arc<AtomicUsize>,
@@ -71,8 +66,7 @@ mod tests {
     }
 
     fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
-        let waker = Waker::from(Arc::new(NoopWake));
-        future.poll(&mut Context::from_waker(&waker))
+        future.poll(&mut Context::from_waker(std::task::Waker::noop()))
     }
 
     fn counted<T>(output: Option<T>) -> (Counted<T>, Arc<AtomicUsize>) {

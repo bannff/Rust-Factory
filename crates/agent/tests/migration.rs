@@ -1,8 +1,8 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
-    task::{Context, Poll, Wake, Waker},
+    sync::Mutex,
+    task::{Context, Poll},
     time::Instant,
 };
 
@@ -59,13 +59,8 @@ impl Controls {
     }
 }
 
-struct NoopWake;
-impl Wake for NoopWake {
-    fn wake(self: Arc<Self>) {}
-}
 fn poll_ready<T>(future: impl Future<Output = T>) -> T {
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(std::task::Waker::noop());
     let mut future = Box::pin(future);
     match Future::poll(Pin::as_mut(&mut future), &mut context) {
         Poll::Ready(value) => value,

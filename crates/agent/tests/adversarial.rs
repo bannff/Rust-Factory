@@ -5,7 +5,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll},
     time::Instant,
 };
 
@@ -67,13 +67,8 @@ impl Controls {
     }
 }
 
-struct NoopWake;
-impl Wake for NoopWake {
-    fn wake(self: Arc<Self>) {}
-}
 fn poll_once<T>(future: Pin<&mut (dyn Future<Output = T> + Send)>) -> Poll<T> {
-    let waker = Waker::from(Arc::new(NoopWake));
-    Future::poll(future, &mut Context::from_waker(&waker))
+    Future::poll(future, &mut Context::from_waker(std::task::Waker::noop()))
 }
 fn ready<T>(future: impl Future<Output = T> + Send) -> T {
     let mut future = Box::pin(future);
