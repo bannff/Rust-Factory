@@ -3,8 +3,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 #[cfg(feature = "local")]
 use evaluation::local::DeterministicCriteriaEvaluator;
@@ -13,13 +12,8 @@ use evaluation::{
     MAX_EXPECTED_BYTES, TerminalEvidenceSnapshotV1, TerminalReason, TerminalStatus, Verdict,
 };
 
-struct NoopWake;
-impl Wake for NoopWake {
-    fn wake(self: Arc<Self>) {}
-}
 fn immediate<F: Future>(future: F) -> F::Output {
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = Box::pin(future);
     match Pin::new(&mut future).poll(&mut context) {
         Poll::Ready(value) => value,
