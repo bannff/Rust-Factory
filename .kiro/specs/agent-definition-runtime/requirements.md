@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Prove that Rust Factory can define, register, inspect, and locally invoke a bounded autonomous agent through MCP without coupling the core to an LLM provider, storage system, sandbox implementation, or workflow engine.
+Prove that Rust Factory can define, register, inspect, and locally invoke a bounded autonomous agent through MCP without coupling the core to an LLM provider implementation, storage system, sandbox implementation, or workflow engine.
+
+> **Issue #34 supersession:** this spec preserves the facts delivered by the original Agent slice. Its Agent-owned synchronous `ModelProvider`, `ModelRequest`, and `StaticModelProvider` wording is historical, not future instruction. Current Agent depends directly on `llm_gateway::LlmProvider`, uses async borrowed `llm_gateway::InvocationControl`, requires an explicit Agent-owned `InvocationContextV1`, and uses `llm_gateway::r#static::StaticProvider` in deterministic tests/composition.
 
 ## Functional requirements
 
@@ -10,8 +12,8 @@ Prove that Rust Factory can define, register, inspect, and locally invoke a boun
 2. An agent definition SHALL be data: ID, display metadata, model policy/reference, instructions, skills, steering references, allowed tool IDs, memory/knowledge/sandbox/communication policies, and positive execution limits.
 3. Agent IDs SHALL use the stable lowercase `[a-z0-9][a-z0-9_-]{0,127}` form. Definitions SHALL reject unknown fields, invalid references, empty required fields, and invalid limits.
 4. The registry SHALL merge immutable built-ins before user definitions. A built-in ID wins any collision; user create, update, or delete operations SHALL reject built-in IDs.
-5. The core SHALL own small, injected ports for `DefinitionStore`, `ModelProvider`, `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, and `Sandbox`.
-6. A local invocation SHALL resolve one validated definition, compute a stable capability-scope digest, allow only the definition's named tools and policies, and return normalized typed events plus a terminal result.
+5. The core SHALL own small, injected ports for `DefinitionStore`, `ToolRegistry`, `MemoryStore`, `KnowledgeStore`, and `Sandbox`; LLM generation SHALL use the inward dependency on `llm_gateway::LlmProvider`. The original delivered Agent-owned synchronous `ModelProvider` requirement is superseded by issue #34.
+6. A local invocation SHALL receive an explicit trusted Agent `InvocationContextV1` and borrowed async `llm_gateway::InvocationControl`, resolve one validated definition, compute a stable capability-scope digest, allow only the definition's named tools and policies, and return normalized typed events plus a terminal result and safe model-evidence projection.
 7. Tool, memory, knowledge, and sandbox requests SHALL be typed and policy-scoped. Model output is untrusted and SHALL never expand the resolved capability scope.
 8. An MCP adapter SHALL expose bounded `agent_definition_validate`, `agent_definition_get`, `agent_definition_list`, `agent_definition_register`, and `agent_runtime_invoke` operations.
 

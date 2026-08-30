@@ -18,10 +18,13 @@ pub mod memory;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
+use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
 use agent::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
@@ -34,6 +37,8 @@ pub const MAX_EVIDENCE_BYTES: usize = 65_536;
 pub const MAX_EVIDENCE_CHUNK_BYTES: usize = 4_096;
 pub const MAX_EVENTS: usize = 64;
 pub const INVOCATION_TIMEOUT: Duration = Duration::from_secs(30);
+const MIN_TERMINAL_EVIDENCE_BYTES: usize =
+    "started".len() + "invocation_failed".len() + "evidence_limit_exceeded".len();
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct LogicalId(String);
@@ -238,24 +243,192 @@ pub trait WorkflowStore: Send + Sync {
     ) -> Result<TransitionResult, WorkflowError>;
 }
 
+const MAX_CANCELLATION_WAITERS: usize = 64;
+
+#[derive(Debug)]
+struct WaiterRegistry {
+    waiters: BTreeMap<u64, Waker>,
+    next_token: Option<u64>,
+}
+impl WaiterRegistry {
+    fn new() -> Self {
+        Self {
+            waiters: BTreeMap::new(),
+            next_token: Some(0),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CancellationState {
+    cancelled: AtomicBool,
+    registry: Mutex<WaiterRegistry>,
+}
+
+struct CancellationWait<'a> {
+    state: &'a CancellationState,
+    token: Option<u64>,
+    completed: bool,
+}
+impl<'a> CancellationWait<'a> {
+    fn new(state: &'a CancellationState) -> Self {
+        Self {
+            state,
+            token: None,
+            completed: false,
+        }
+    }
+
+    fn finish_ready(
+        &mut self,
+        mut registry: std::sync::MutexGuard<'_, WaiterRegistry>,
+        incoming_waker: Option<Waker>,
+    ) -> Poll<()> {
+        let removed_waker = self
+            .token
+            .take()
+            .and_then(|token| registry.waiters.remove(&token));
+        self.completed = true;
+        drop(registry);
+        drop(removed_waker);
+        drop(incoming_waker);
+        Poll::Ready(())
+    }
+
+    fn poll_after_precheck(&mut self, incoming_waker: Waker) -> Poll<()> {
+        let mut registry = match self.state.registry.lock() {
+            Ok(registry) => registry,
+            Err(poisoned) => {
+                return self.finish_ready(poisoned.into_inner(), Some(incoming_waker));
+            }
+        };
+        if self.state.cancelled.load(Ordering::Acquire) {
+            return self.finish_ready(registry, Some(incoming_waker));
+        }
+        if let Some(token) = self.token {
+            let Some(registered_waker) = registry.waiters.get_mut(&token) else {
+                self.token = None;
+                self.completed = true;
+                drop(registry);
+                drop(incoming_waker);
+                return Poll::Ready(());
+            };
+            if registered_waker.will_wake(&incoming_waker) {
+                drop(registry);
+                drop(incoming_waker);
+                return Poll::Pending;
+            }
+            let old_waker = std::mem::replace(registered_waker, incoming_waker);
+            drop(registry);
+            drop(old_waker);
+            return Poll::Pending;
+        }
+        if registry.waiters.len() >= MAX_CANCELLATION_WAITERS {
+            self.completed = true;
+            drop(registry);
+            drop(incoming_waker);
+            return Poll::Ready(());
+        }
+        let Some(token) = registry.next_token.take() else {
+            self.completed = true;
+            drop(registry);
+            drop(incoming_waker);
+            return Poll::Ready(());
+        };
+        registry.next_token = token.checked_add(1);
+        match registry.waiters.entry(token) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(incoming_waker);
+                self.token = Some(token);
+                Poll::Pending
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {
+                self.completed = true;
+                drop(registry);
+                drop(incoming_waker);
+                Poll::Ready(())
+            }
+        }
+    }
+}
+impl Future for CancellationWait<'_> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, context: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let wait = self.get_mut();
+        if wait.completed {
+            return Poll::Ready(());
+        }
+        if wait.state.cancelled.load(Ordering::Acquire) {
+            let registry = match wait.state.registry.lock() {
+                Ok(registry) => registry,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            return wait.finish_ready(registry, None);
+        }
+        let incoming_waker = context.waker().clone();
+        wait.poll_after_precheck(incoming_waker)
+    }
+}
+impl Drop for CancellationWait<'_> {
+    fn drop(&mut self) {
+        let Some(token) = self.token.take() else {
+            return;
+        };
+        let mut registry = match self.state.registry.lock() {
+            Ok(registry) => registry,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let removed_waker = registry.waiters.remove(&token);
+        drop(registry);
+        drop(removed_waker);
+    }
+}
+
+/// Process-local cancellation signal with a bounded 64-subscriber broadcast.
+///
+/// Waiting fails closed and completes if subscriber capacity or token space is
+/// exhausted, or if the process-local waiter registry is poisoned.
 #[derive(Clone, Debug)]
-pub struct CancellationSignal(Arc<AtomicBool>);
+pub struct CancellationSignal(Arc<CancellationState>);
 impl CancellationSignal {
     #[must_use]
     pub fn new() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self(Arc::new(CancellationState {
+            cancelled: AtomicBool::new(false),
+            registry: Mutex::new(WaiterRegistry::new()),
+        }))
     }
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.0.cancelled.store(true, Ordering::Release);
+        let waiters = {
+            let mut registry = match self.0.registry.lock() {
+                Ok(registry) => registry,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            std::mem::take(&mut registry.waiters)
+        };
+        for waiter in waiters.into_values() {
+            waiter.wake();
+        }
     }
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.cancelled.load(Ordering::Acquire)
     }
 }
 impl Default for CancellationSignal {
     fn default() -> Self {
         Self::new()
+    }
+}
+impl llm_gateway::CancellationSignal for CancellationSignal {
+    fn is_cancelled(&self) -> bool {
+        self.is_cancelled()
+    }
+
+    fn cancelled(&self) -> llm_gateway::CancellationFuture<'_> {
+        Box::pin(CancellationWait::new(&self.0))
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,9 +444,6 @@ pub struct AgentInvocationRequest {
     pub attempt_id: LogicalId,
     pub effective_capability_ceiling: EffectiveCapabilityCeilingV1,
     pub policy_decision_digest: String,
-    pub downstream_idempotency_key: String,
-    pub cancellation: CancellationSignal,
-    pub deadline: Instant,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InvocationEvidence {
@@ -286,26 +456,35 @@ impl InvocationEvidence {
             kind: kind.into(),
             data: data.into(),
         };
-        (!evidence.kind.is_empty()
-            && evidence.kind.len() + evidence.data.len() <= MAX_EVIDENCE_CHUNK_BYTES)
+        let bytes = evidence
+            .kind
+            .len()
+            .checked_add(evidence.data.len())
+            .ok_or(WorkflowError::LimitExceeded)?;
+        (!evidence.kind.is_empty() && bytes <= MAX_EVIDENCE_CHUNK_BYTES)
             .then_some(evidence)
             .ok_or(WorkflowError::LimitExceeded)
     }
 }
-pub trait InvocationEvidenceSink {
+pub trait InvocationEvidenceSink: Send {
     fn emit(&mut self, evidence: InvocationEvidence) -> Result<(), WorkflowError>;
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentInvocationResult {
     pub capability_scope_digest: String,
 }
+pub type AgentInvocationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<AgentInvocationResult, WorkflowError>> + Send + 'a>>;
+pub type WorkflowFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 pub trait AgentInvoker: Send + Sync {
     fn validate_agent(&self, id: &AgentId) -> Result<bool, WorkflowError>;
-    fn invoke(
-        &self,
+    fn invoke<'a>(
+        &'a self,
         request: AgentInvocationRequest,
-        evidence: &mut dyn InvocationEvidenceSink,
-    ) -> Result<AgentInvocationResult, WorkflowError>;
+        control: llm_gateway::InvocationControl<'a>,
+        evidence: &'a mut dyn InvocationEvidenceSink,
+    ) -> AgentInvocationFuture<'a>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -326,6 +505,8 @@ pub enum WorkflowError {
     RunKeyConflict,
     Conflict,
     LimitExceeded,
+    Cancelled,
+    DeadlineExceeded,
     AdapterFailure,
 }
 impl WorkflowError {
@@ -338,7 +519,9 @@ impl WorkflowError {
             Self::RunKeyConflict => PublicErrorCode::RunKeyConflict,
             Self::Conflict => PublicErrorCode::Conflict,
             Self::LimitExceeded => PublicErrorCode::LimitExceeded,
-            Self::AdapterFailure => PublicErrorCode::OperationFailed,
+            Self::Cancelled | Self::DeadlineExceeded | Self::AdapterFailure => {
+                PublicErrorCode::OperationFailed
+            }
         }
     }
 }
@@ -349,11 +532,34 @@ impl fmt::Display for WorkflowError {
 }
 impl std::error::Error for WorkflowError {}
 
+impl From<agent::DefinitionError> for WorkflowError {
+    fn from(error: agent::DefinitionError) -> Self {
+        match error {
+            agent::DefinitionError::LimitExceeded => Self::LimitExceeded,
+            agent::DefinitionError::Cancelled => Self::Cancelled,
+            agent::DefinitionError::DeadlineExceeded => Self::DeadlineExceeded,
+            agent::DefinitionError::InvalidRequest => Self::InvalidRequest,
+            agent::DefinitionError::InvalidId
+            | agent::DefinitionError::InvalidDefinition
+            | agent::DefinitionError::InvalidReference => Self::InvalidDefinition,
+            agent::DefinitionError::NotFound => Self::NotFound,
+            agent::DefinitionError::ReferenceUnavailable
+            | agent::DefinitionError::BuiltinProtected
+            | agent::DefinitionError::UnknownTool(_)
+            | agent::DefinitionError::ToolDisallowed(_)
+            | agent::DefinitionError::MemoryDenied
+            | agent::DefinitionError::KnowledgeDenied
+            | agent::DefinitionError::SandboxDenied
+            | agent::DefinitionError::AdapterFailure => Self::AdapterFailure,
+        }
+    }
+}
+
 pub fn validate_definition(definition: &WorkflowDefinitionV1) -> Result<(), WorkflowError> {
     (definition.budget.max_attempts == 1
         && definition.budget.max_input_bytes > 0
         && definition.budget.max_input_bytes <= MAX_JSON_INPUT_BYTES
-        && definition.budget.max_evidence_bytes > 0
+        && definition.budget.max_evidence_bytes >= MIN_TERMINAL_EVIDENCE_BYTES
         && definition.budget.max_evidence_bytes <= MAX_EVIDENCE_BYTES)
         .then_some(())
         .ok_or(WorkflowError::InvalidDefinition)
@@ -371,20 +577,52 @@ pub fn input_digest(canonical_input: &str) -> String {
     hex_digest(canonical_input.as_bytes())
 }
 
+#[derive(Clone)]
+struct ActiveCancellation {
+    token: u64,
+    signal: CancellationSignal,
+}
+
+struct CancellationRegistration<'a> {
+    registrations: &'a Mutex<BTreeMap<LogicalId, ActiveCancellation>>,
+    run_id: LogicalId,
+    token: u64,
+}
+impl Drop for CancellationRegistration<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut registrations) = self.registrations.lock()
+            && registrations
+                .get(&self.run_id)
+                .is_some_and(|active| active.token == self.token)
+        {
+            registrations.remove(&self.run_id);
+        }
+    }
+}
+
 pub struct WorkflowRunner<S, C, I> {
     store: S,
     catalog: C,
     invoker: I,
-    cancellations: Mutex<BTreeMap<LogicalId, CancellationSignal>>,
+    deadline_factory: Box<dyn llm_gateway::DeadlineFactory>,
+    cancellations: Mutex<BTreeMap<LogicalId, ActiveCancellation>>,
+    next_registration: AtomicU64,
 }
 impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRunner<S, C, I> {
     #[must_use]
-    pub fn new(store: S, catalog: C, invoker: I) -> Self {
+    pub fn new(
+        store: S,
+        catalog: C,
+        invoker: I,
+        deadline_factory: Box<dyn llm_gateway::DeadlineFactory>,
+    ) -> Self {
         Self {
             store,
             catalog,
             invoker,
+            deadline_factory,
             cancellations: Mutex::new(BTreeMap::new()),
+            next_registration: AtomicU64::new(1),
         }
     }
     pub fn validate(&self, definition: &WorkflowDefinitionV1) -> Result<(), WorkflowError> {
@@ -394,6 +632,7 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
             .then_some(())
             .ok_or(WorkflowError::NotFound)
     }
+    #[must_use]
     pub fn start(
         &self,
         context: RequestContext,
@@ -401,25 +640,29 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
         version: WorkflowVersion,
         run_key: String,
         input: String,
-    ) -> Result<RunSummary, WorkflowError> {
-        self.start_with_policy(
-            context,
-            workflow_id,
-            version,
-            run_key,
-            input,
-            InvocationPolicy {
-                effective_capability_ceiling: EffectiveCapabilityCeilingV1 {
-                    allowed_tool_ids: vec![],
-                    memory_enabled: false,
-                    knowledge_enabled: false,
-                    sandbox_execution_allowed: false,
-                    communication_allowed: false,
+    ) -> WorkflowFuture<'_, Result<RunSummary, WorkflowError>> {
+        Box::pin(async move {
+            self.start_with_policy(
+                context,
+                workflow_id,
+                version,
+                run_key,
+                input,
+                InvocationPolicy {
+                    effective_capability_ceiling: EffectiveCapabilityCeilingV1 {
+                        allowed_tool_ids: vec![],
+                        memory_enabled: false,
+                        knowledge_enabled: false,
+                        sandbox_execution_allowed: false,
+                        communication_allowed: false,
+                    },
+                    policy_decision_digest: "0".repeat(64),
                 },
-                policy_decision_digest: "0".repeat(64),
-            },
-        )
+            )
+            .await
+        })
     }
+    #[must_use]
     pub fn start_with_policy(
         &self,
         context: RequestContext,
@@ -428,50 +671,54 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
         run_key: String,
         input: String,
         policy: InvocationPolicy,
-    ) -> Result<RunSummary, WorkflowError> {
-        validate_invocation_policy(
-            &policy.effective_capability_ceiling,
-            &policy.policy_decision_digest,
-        )?;
-        if run_key.is_empty() || run_key.len() > MAX_RUN_KEY_BYTES {
-            return Err(WorkflowError::InvalidRequest);
-        }
-        let definition = self
-            .catalog
-            .resolve(&workflow_id, version)?
-            .ok_or(WorkflowError::NotFound)?;
-        self.validate(&definition)?;
-        let canonical_input = canonical_json(&input, definition.budget.max_input_bytes)?;
-        let identity = StartIdentity {
-            key: StartKey {
-                tenant_id: context.tenant_id.clone(),
-                workflow_id: workflow_id.clone(),
+    ) -> WorkflowFuture<'_, Result<RunSummary, WorkflowError>> {
+        Box::pin(async move {
+            validate_invocation_policy(
+                &policy.effective_capability_ceiling,
+                &policy.policy_decision_digest,
+            )?;
+            if run_key.is_empty() || run_key.len() > MAX_RUN_KEY_BYTES {
+                return Err(WorkflowError::InvalidRequest);
+            }
+            let definition = self
+                .catalog
+                .resolve(&workflow_id, version)?
+                .ok_or(WorkflowError::NotFound)?;
+            self.validate(&definition)?;
+            let canonical_input = canonical_json(&input, definition.budget.max_input_bytes)?;
+            let identity = StartIdentity {
+                key: StartKey {
+                    tenant_id: context.tenant_id.clone(),
+                    workflow_id: workflow_id.clone(),
+                    workflow_version: version,
+                    run_key: run_key.clone(),
+                },
+                input_digest: input_digest(&canonical_input),
+            };
+            let run = Run {
+                id: derived_id("run", &identity_material(&identity))?,
+                context: context.clone(),
+                workflow_id,
                 workflow_version: version,
-                run_key: run_key.clone(),
-            },
-            input_digest: input_digest(&canonical_input),
-        };
-        let run = Run {
-            id: derived_id("run", &identity_material(&identity))?,
-            context: context.clone(),
-            workflow_id,
-            workflow_version: version,
-            run_key,
-            input_digest: identity.input_digest.clone(),
-            max_evidence_bytes: definition.budget.max_evidence_bytes,
-            status: RunStatus::Pending,
-            revision: 0,
-            terminal_reason: None,
-            attempt: None,
-            events: vec![],
-        };
-        match self.store.create_or_return(identity, run)? {
-            CreateRun::Existing(run) => Ok(RunSummary::from(&run)),
-            CreateRun::Conflict => Err(WorkflowError::RunKeyConflict),
-            CreateRun::Created(run) => self.execute(definition, run, canonical_input, policy),
-        }
+                run_key,
+                input_digest: identity.input_digest.clone(),
+                max_evidence_bytes: definition.budget.max_evidence_bytes,
+                status: RunStatus::Pending,
+                revision: 0,
+                terminal_reason: None,
+                attempt: None,
+                events: vec![],
+            };
+            match self.store.create_or_return(identity, run)? {
+                CreateRun::Existing(run) => Ok(RunSummary::from(&run)),
+                CreateRun::Conflict => Err(WorkflowError::RunKeyConflict),
+                CreateRun::Created(run) => {
+                    self.execute(definition, run, canonical_input, policy).await
+                }
+            }
+        })
     }
-    fn execute(
+    async fn execute(
         &self,
         definition: WorkflowDefinitionV1,
         run: Run,
@@ -506,36 +753,46 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
             started,
         ) {
             Ok(TransitionResult::Applied(value)) => value,
-            Ok(TransitionResult::Conflict) => {
-                self.unregister(&run.id)?;
-                return Err(WorkflowError::Conflict);
-            }
-            Ok(TransitionResult::NotFound) => {
-                self.unregister(&run.id)?;
-                return Err(WorkflowError::NotFound);
-            }
+            Ok(TransitionResult::Conflict) => return Err(WorkflowError::Conflict),
+            Ok(TransitionResult::NotFound) => return Err(WorkflowError::NotFound),
+            Err(error) => return Err(error),
+        };
+        let signal = CancellationSignal::new();
+        let mut evidence = match EvidenceCollector::new(active.max_evidence_bytes, &active.events) {
+            Ok(evidence) => evidence,
             Err(error) => {
-                self.unregister(&run.id)?;
+                self.terminalize_setup_failure(&active, "evidence_limit_exceeded")?;
                 return Err(error);
             }
         };
-        let signal = CancellationSignal::new();
-        if self
-            .cancellations
-            .lock()
-            .map(|mut cancellations| cancellations.insert(active.id.clone(), signal.clone()))
-            .is_err()
-        {
-            let _ = self.store.transition(
-                &active.context.tenant_id,
-                &active.id,
-                active.revision,
-                RunStatus::Running,
-                finish_failure(&active, "cancellation_registration_failed"),
-            );
+        let Ok(token) =
+            self.next_registration
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    current.checked_add(1)
+                })
+        else {
+            self.terminalize_setup_failure(&active, "cancellation_registration_failed")?;
             return Err(WorkflowError::AdapterFailure);
+        };
+        {
+            let Ok(mut cancellations) = self.cancellations.lock() else {
+                self.terminalize_setup_failure(&active, "cancellation_registration_failed")?;
+                return Err(WorkflowError::AdapterFailure);
+            };
+            cancellations.insert(
+                active.id.clone(),
+                ActiveCancellation {
+                    token,
+                    signal: signal.clone(),
+                },
+            );
         }
-        let key = hex_digest(
+        let registration = CancellationRegistration {
+            registrations: &self.cancellations,
+            run_id: active.id.clone(),
+            token,
+        };
+        let Ok(key) = llm_gateway::IdempotencyKey::new(hex_digest(
             format!(
                 "{}:{}:{}",
                 active.context.tenant_id.as_str(),
@@ -543,23 +800,38 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
                 attempt_id.as_str()
             )
             .as_bytes(),
-        );
-        let mut evidence = EvidenceCollector::new(active.max_evidence_bytes, active.events.len());
-        let outcome = self.invoker.invoke(
-            AgentInvocationRequest {
-                context: active.context.clone(),
-                agent_id: definition.step.agent_id,
-                input,
-                attempt_id,
-                effective_capability_ceiling: policy.effective_capability_ceiling,
-                policy_decision_digest: policy.policy_decision_digest,
-                downstream_idempotency_key: key,
-                cancellation: signal,
-                deadline: Instant::now() + INVOCATION_TIMEOUT,
-            },
-            &mut evidence,
-        );
-        self.unregister(&active.id)?;
+        )) else {
+            drop(registration);
+            self.terminalize_setup_failure(&active, "invocation_control_failed")?;
+            return Err(WorkflowError::AdapterFailure);
+        };
+        let Some(instant) = Instant::now().checked_add(INVOCATION_TIMEOUT) else {
+            drop(registration);
+            self.terminalize_setup_failure(&active, "invocation_control_failed")?;
+            return Err(WorkflowError::AdapterFailure);
+        };
+        let deadline = self.deadline_factory.create(instant);
+        let control = llm_gateway::InvocationControl {
+            idempotency_key: &key,
+            cancellation: &signal,
+            deadline: deadline.as_ref(),
+        };
+        let outcome = self
+            .invoker
+            .invoke(
+                AgentInvocationRequest {
+                    context: active.context.clone(),
+                    agent_id: definition.step.agent_id,
+                    input,
+                    attempt_id,
+                    effective_capability_ceiling: policy.effective_capability_ceiling,
+                    policy_decision_digest: policy.policy_decision_digest,
+                },
+                control,
+                &mut evidence,
+            )
+            .await;
+        drop(registration);
         let (transition, result_error) = match outcome {
             Ok(result) => match finish_success(&active, result, evidence) {
                 Ok(transition) => (transition, None),
@@ -568,17 +840,15 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
                     Some(error),
                 ),
             },
-            Err(error) => (
-                finish_failure(
-                    &active,
-                    if error == WorkflowError::LimitExceeded {
-                        "evidence_limit_exceeded"
-                    } else {
-                        "invocation_failed"
-                    },
-                ),
-                Some(error),
-            ),
+            Err(error) => {
+                let reason = match error {
+                    WorkflowError::LimitExceeded => "evidence_limit_exceeded",
+                    WorkflowError::Cancelled => "cancelled",
+                    WorkflowError::DeadlineExceeded => "deadline_exceeded",
+                    _ => "invocation_failed",
+                };
+                (finish_failure(&active, reason), Some(error))
+            }
         };
         let summary = match self.store.transition(
             &active.context.tenant_id,
@@ -596,12 +866,17 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
             Some(_) | None => Ok(summary),
         }
     }
-    fn unregister(&self, run_id: &LogicalId) -> Result<(), WorkflowError> {
-        self.cancellations
-            .lock()
-            .map_err(|_| WorkflowError::AdapterFailure)?
-            .remove(run_id);
-        Ok(())
+    fn terminalize_setup_failure(&self, active: &Run, reason: &str) -> Result<(), WorkflowError> {
+        match self.store.transition(
+            &active.context.tenant_id,
+            &active.id,
+            active.revision,
+            RunStatus::Running,
+            finish_failure(active, reason),
+        )? {
+            TransitionResult::Applied(_) | TransitionResult::Conflict => Ok(()),
+            TransitionResult::NotFound => Err(WorkflowError::NotFound),
+        }
     }
     pub fn get(&self, tenant: &LogicalId, run: LogicalId) -> Result<RunSummary, WorkflowError> {
         self.store
@@ -634,7 +909,7 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
             .lock()
             .map_err(|_| WorkflowError::AdapterFailure)?
             .get(&run.id)
-            .cloned()
+            .map(|active| active.signal.clone())
             .ok_or(WorkflowError::Conflict)?;
         signal.cancel();
         let attempt = run.attempt.clone().map(|mut item| {
@@ -664,31 +939,47 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
 
 struct EvidenceCollector {
     limit: usize,
+    existing_events: usize,
+    used_bytes: usize,
     events: Vec<InvocationEvidence>,
     output: Option<String>,
 }
 impl EvidenceCollector {
-    fn new(limit: usize, existing_events: usize) -> Self {
-        Self {
-            limit,
-            events: Vec::with_capacity(MAX_EVENTS.saturating_sub(existing_events)),
-            output: None,
+    fn new(limit: usize, existing_events: &[WorkflowEvent]) -> Result<Self, WorkflowError> {
+        let used_bytes = evidence_bytes(
+            existing_events
+                .iter()
+                .map(|event| (event.kind.as_str(), event.data.as_str())),
+        )?;
+        if used_bytes > limit || existing_events.len() > MAX_EVENTS {
+            return Err(WorkflowError::LimitExceeded);
         }
+        Ok(Self {
+            limit,
+            existing_events: existing_events.len(),
+            used_bytes,
+            events: Vec::with_capacity(MAX_EVENTS.saturating_sub(existing_events.len())),
+            output: None,
+        })
     }
 }
 impl InvocationEvidenceSink for EvidenceCollector {
     fn emit(&mut self, evidence: InvocationEvidence) -> Result<(), WorkflowError> {
-        if self.events.len() >= MAX_EVENTS.saturating_sub(1)
-            || evidence.kind.len() + evidence.data.len() > MAX_EVIDENCE_CHUNK_BYTES
-            || self
-                .events
-                .iter()
-                .map(|item| item.kind.len() + item.data.len())
-                .sum::<usize>()
-                + evidence.kind.len()
-                + evidence.data.len()
-                > self.limit
-        {
+        let item_bytes = evidence
+            .kind
+            .len()
+            .checked_add(evidence.data.len())
+            .ok_or(WorkflowError::LimitExceeded)?;
+        let total = self
+            .used_bytes
+            .checked_add(item_bytes)
+            .ok_or(WorkflowError::LimitExceeded)?;
+        let event_count = self
+            .existing_events
+            .checked_add(self.events.len())
+            .and_then(|count| count.checked_add(1))
+            .ok_or(WorkflowError::LimitExceeded)?;
+        if event_count > MAX_EVENTS || item_bytes > MAX_EVIDENCE_CHUNK_BYTES || total > self.limit {
             return Err(WorkflowError::LimitExceeded);
         }
         if evidence.kind == "result" {
@@ -697,6 +988,7 @@ impl InvocationEvidenceSink for EvidenceCollector {
             }
             self.output = Some(evidence.data.clone());
         }
+        self.used_bytes = total;
         self.events.push(evidence);
         Ok(())
     }
@@ -743,19 +1035,32 @@ fn finish_failure(run: &Run, error: &str) -> Transition {
         }],
     }
 }
+
+fn evidence_bytes<'a>(
+    values: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Result<usize, WorkflowError> {
+    values.into_iter().try_fold(0_usize, |total, (kind, data)| {
+        total
+            .checked_add(kind.len())
+            .and_then(|value| value.checked_add(data.len()))
+            .ok_or(WorkflowError::LimitExceeded)
+    })
+}
+
 #[must_use]
 pub fn transition_is_valid(run: &Run, expected_status: RunStatus, transition: &Transition) -> bool {
+    let event_count = run.events.len().checked_add(transition.events.len());
+    let evidence_size = evidence_bytes(
+        run.events
+            .iter()
+            .chain(&transition.events)
+            .map(|event| (event.kind.as_str(), event.data.as_str())),
+    );
     if run.status != expected_status
         || run.status.is_terminal()
         || transition.events.is_empty()
-        || run.events.len() + transition.events.len() > MAX_EVENTS
-        || run
-            .events
-            .iter()
-            .chain(&transition.events)
-            .map(|event| event.kind.len() + event.data.len())
-            .sum::<usize>()
-            > run.max_evidence_bytes
+        || event_count.is_none_or(|count| count > MAX_EVENTS)
+        || !matches!(evidence_size, Ok(size) if size <= run.max_evidence_bytes)
     {
         return false;
     }
@@ -1112,3 +1417,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "qa_tests.rs"]
+mod qa_tests;

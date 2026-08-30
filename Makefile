@@ -5,7 +5,7 @@
 # cores. The -features targets below are what cover the adapter code; without
 # them roughly half the workspace would go uncompiled, unlinted, and untested.
 
-BRICKS := agent auth evaluation memory observability policy project storage workflow
+BRICKS := agent auth evaluation llm-gateway memory observability policy project storage workflow
 
 fmt:
 	cargo fmt --all
@@ -28,6 +28,9 @@ lint-features:
 	cargo clippy -p evaluation --features serdes-ai-evals --all-targets -- -D warnings
 	cargo clippy -p evaluation --features settings --all-targets -- -D warnings
 	cargo clippy -p evaluation --features mcp,memory,local,serdes-ai-evals,settings --all-targets -- -D warnings
+	cargo clippy -p llm-gateway --no-default-features --features static --all-targets -- -D warnings
+	cargo clippy -p llm-gateway --no-default-features --features genai --all-targets -- -D warnings
+	cargo clippy -p llm-gateway --no-default-features --features static,genai --all-targets -- -D warnings
 	cargo clippy -p memory --features local --all-targets -- -D warnings
 	cargo clippy -p memory --features agentic --all-targets -- -D warnings
 	cargo clippy -p memory --features settings --all-targets -- -D warnings
@@ -59,6 +62,9 @@ test-features:
 	cargo test -p evaluation --features serdes-ai-evals
 	cargo test -p evaluation --features settings
 	cargo test -p evaluation --features mcp,memory,local,serdes-ai-evals,settings
+	cargo test -p llm-gateway --no-default-features --features static
+	cargo test -p llm-gateway --no-default-features --features genai
+	cargo test -p llm-gateway --no-default-features --features static,genai
 	cargo test -p memory --features local
 	cargo test -p memory --features settings
 	cargo test -p memory --features agentic,local
@@ -92,7 +98,7 @@ test-features:
 # graph in isolation, so it says nothing about artifacts: Cargo unifies features
 # per build graph, so a binary composing several bricks with `mcp` enabled links
 # one framework-carrying build of each.
-ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory redb opentelemetry serdes-ai-evals biscuit-auth prost
+ADAPTER_DEPS := rmcp mcp-transport schemars@0.9.0 schemars@1.2.2 anyhow cap-std tokio genai reqwest futures agentic-memory redb opentelemetry serdes-ai-evals biscuit-auth prost
 
 isolation-check:
 	@for dep in $(ADAPTER_DEPS); do \
