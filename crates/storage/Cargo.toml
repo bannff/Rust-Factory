@@ -1,0 +1,29 @@
+[package]
+name = "storage"
+description = "Bounded tenant-scoped authoritative versioned object storage."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[package.metadata.rust-factory]
+family = "storage"
+role = "brick"
+status = "implemented"
+
+[features]
+local = []
+redb = ["dep:redb"]
+settings = ["dep:serde", "dep:schemars"]
+
+[dependencies]
+redb = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -4,30 +4,34 @@
 
 ```text
 capability family
-  <brick>          stable domain contract; required only when independently owned
-  <brick>-memory        optional deterministic local stateful adapter
-  <brick>-<vendor>      optional one-provider / one-integration adapter
-  <brick>-mcp           optional bounded control-plane adapter library
-  <brick>-mesh          optional peer adapter after a dedicated boundary specification
-  <brick>-test-support  optional non-production fixture crate after two consumers
-  <brick>-server        optional binary composition root
+  crates/<brick>                one capability crate (`role = "brick"`)
+    typed core                  models, validation, errors, ports, service
+    feature-gated adapters      mcp, memory/local, fs, settings, or one vendor module
+  crates/<brick>-mesh           optional peer adapter after a dedicated boundary specification
+  crates/<brick>-test-support   optional non-production fixtures after two consumers
 
-adapter infrastructure: mcp-transport, cap-std, provider SDKs, databases, network clients
-composition bases: MCP server, API server, worker, edge binary
-optional domain packs: datasets, ML, security, payments, games, UI, OpenArcade
+status-only family
+  crates/<brick>                bounded intermediate package (`role = "core"`)
+
+adapter infrastructure          shared package owning no capability (`role = "infrastructure"`)
+composition base
+  projects/<name>               binary composition root (`role = "server"`)
+optional domain pack            uses the same capability seams
 ```
 
-A capability core exposes a stable Rust SDK and ports. Every arrow points inward:
+A capability crate exposes a stable Rust SDK and ports. Its adapters are modules, not packages. Every dependency points inward:
 
 ```text
-vendor / memory / MCP adapter / server  ──>  capability core
-server                                 ──>  MCP adapter + concrete adapters
-core                                   ──>  another capability only through its typed port
+feature-gated adapter module  ──>  capability core
+server                       ──>  brick adapter modules + concrete implementations
+core                         ──>  another capability only through its typed port
 ```
+
+The capability roadmap and taxonomy live in GitHub issues and GitHub Projects. Local package metadata describes packages that exist; it is not a roadmap and is not cross-checked against external roadmap membership.
 
 ## Mandatory scaffold package shape
 
-A capability family that is committed but not yet designed may use this agent-maintainable status-only core tree as a bounded intermediate step. It is intentionally uniform so agents can enumerate and fill the same responsibility paths deterministically. A family with no demonstrated consumer receives no package at all — it stays a registry row naming its future crate.
+A capability family that is committed but not yet designed may use this agent-maintainable status-only core tree as a bounded intermediate step. It is intentionally uniform so agents can enumerate and fill the same responsibility paths deterministically. A family with no demonstrated consumer receives no package at all and remains roadmap-only in its GitHub issue and GitHub Projects entry.
 
 ```text
 crates/<brick>/
@@ -43,7 +47,7 @@ crates/<brick>/
     public_contract.rs              # status-only until public contract exists
 ```
 
-A status-only tree has only documentation/comments, compiles, has zero non-stdlib dependencies, exposes no public semantic APIs, and carries no behavior/durability/security claim. Its metadata record is authoritative:
+A status-only tree has only documentation/comments, compiles, has zero non-stdlib dependencies, exposes no public semantic APIs, and carries no behavior/durability/security claim. Its metadata is the authoritative machine-readable record for that package only:
 
 ```toml
 [package.metadata.rust-factory]
@@ -52,23 +56,25 @@ role = "core"
 status = "scaffolded"
 ```
 
-The closed role set is `core`, `memory`, `adapter`, `vendor`, `mcp`, `server`, `mesh`, `infrastructure`, and `test-support`. The closed package-status set is `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Crate-level documentation mirrors those fields; the Vision registry remains the family-level source of truth. `scripts/validate_brick_registry.py` enforces this for every package: it rejects a missing or malformed metadata record, unknown or unregistered families, unknown roles/statuses, a missing or extra status-only path, non-comment status-only source, forbidden status-only dependencies and target/feature configuration, canonical scaffold path mismatches, binary targets under `crates/`, `role = "server"` disagreeing with residence under `projects/`, unlisted or phantom workspace members, package directories without a manifest, and registry disagreement in either direction.
+The closed role set is `brick`, `core`, `infrastructure`, `server`, `mesh`, and `test-support`. The closed package-status set is `scaffolded`, `specified`, `implemented`, `migration-pending`, and `deprecated`. Crate-level documentation mirrors those fields. `scripts/validate_brick_registry.py` enforces local workspace/package structure: workspace inventory; package naming, placement, targets, and exactly-three-field metadata; status-only family placement, shape, source content, and configuration; feature defaults; adapter dependency and module isolation for bricks; and Makefile coverage for every brick and declared feature. It accepts any non-empty family name and does not validate GitHub issue or GitHub Projects membership, Vision drift, or bidirectional roadmap agreement.
 
 ## Mature role shape
 
-A mature capability family may contain only the roles its approved semantics justify:
+A mature capability family keeps its typed core and eligible adapters in one brick crate:
 
 ```text
-<brick>          typed models, validation, errors, ports, service
-<brick>-memory        process-local adapter for a concrete core-owned stateful port
-<brick>-<vendor>      one integration implementing an existing core-owned port
-<brick>-mcp           bounded DTO/convert/service library, never process stdio lifecycle
-<brick>-server        binary config/composition/runtime/transport/trusted-context owner
-<brick>-mesh          native peer adapter only after its own boundary specification
-<brick>-test-support  shared non-production fixtures only after two consumers
+crates/<brick>/
+  src/{model,validation,error,port,service}.rs   typed core
+  src/mcp.rs or src/mcp/                         bounded control-plane adapter
+  src/{memory,local,fs,settings}.rs              eligible local/config adapters
+  src/<vendor>.rs                                one vendor integration named for its crate
+
+projects/<name>/                                 optional server composition root
+crates/<brick>-mesh/                             optional peer adapter package
+crates/<brick>-test-support/                     optional shared-fixture package
 ```
 
-Adapter infrastructure has no core. Composition bases are binaries only. Optional domain packs use the same capability seams but do not introduce domain conditionals into generic cores. A role in a mature shape is not automatically stamped: it appears only when the corresponding contract/topology is approved.
+Every adapter module is feature-gated, including adapters with no dependency, and no feature is enabled by default. `mcp`, `memory`, `adapter`, and `vendor` are retired as package roles; adapters do not receive separate package metadata. Only `server`, `mesh`, and `test-support` are separate roles for artifacts a brick cannot contain. Shared cross-family infrastructure uses `infrastructure` and owns no capability. Composition bases are binaries only. Optional domain packs use the same capability seams but do not introduce domain conditionals into generic cores. A module or separate role appears only when its corresponding contract or topology is approved.
 
 ## Boundary contract
 

@@ -5,7 +5,7 @@
 # cores. The -features targets below are what cover the adapter code; without
 # them roughly half the workspace would go uncompiled, unlinted, and untested.
 
-BRICKS := agent evaluation memory observability policy project workflow
+BRICKS := agent auth evaluation memory observability policy project storage workflow
 
 fmt:
 	cargo fmt --all
@@ -21,6 +21,7 @@ lint:
 # `fs`, which is exactly the combination a consumer is most likely to pick.
 lint-features:
 	cargo clippy -p agent --features mcp --all-targets -- -D warnings
+	cargo clippy -p auth --features biscuit --all-targets -- -D warnings
 	cargo clippy -p evaluation --features mcp --all-targets -- -D warnings
 	cargo clippy -p evaluation --features memory --all-targets -- -D warnings
 	cargo clippy -p evaluation --features local --all-targets -- -D warnings
@@ -39,6 +40,10 @@ lint-features:
 	cargo clippy -p policy --features memory --all-targets -- -D warnings
 	cargo clippy -p project --features fs --all-targets -- -D warnings
 	cargo clippy -p project --features mcp --all-targets -- -D warnings
+	cargo clippy -p storage --features local --all-targets -- -D warnings
+	cargo clippy -p storage --features redb --all-targets -- -D warnings
+	cargo clippy -p storage --features settings --all-targets -- -D warnings
+	cargo clippy -p storage --features local,redb,settings --all-targets -- -D warnings
 	cargo clippy -p workflow --features mcp --all-targets -- -D warnings
 	cargo clippy -p workflow --features memory --all-targets -- -D warnings
 	cargo clippy --workspace --all-features --all-targets -- -D warnings
@@ -48,6 +53,7 @@ test:
 
 test-features:
 	cargo test -p agent --features mcp
+	cargo test -p auth --features biscuit
 	cargo test -p evaluation --features mcp,memory
 	cargo test -p evaluation --features local
 	cargo test -p evaluation --features serdes-ai-evals
@@ -67,6 +73,10 @@ test-features:
 	cargo test -p policy --features memory
 	cargo test -p project --features mcp,fs
 	cargo test -p project --features mcp
+	cargo test -p storage --features local
+	cargo test -p storage --features redb
+	cargo test -p storage --features settings
+	cargo test -p storage --features local,redb,settings
 	cargo test -p workflow --features mcp,memory
 	cargo test --workspace --all-features
 
@@ -82,7 +92,7 @@ test-features:
 # graph in isolation, so it says nothing about artifacts: Cargo unifies features
 # per build graph, so a binary composing several bricks with `mcp` enabled links
 # one framework-carrying build of each.
-ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory opentelemetry serdes-ai-evals
+ADAPTER_DEPS := rmcp mcp-transport schemars anyhow cap-std tokio agentic-memory redb opentelemetry serdes-ai-evals biscuit-auth prost
 
 isolation-check:
 	@for dep in $(ADAPTER_DEPS); do \
@@ -103,6 +113,7 @@ isolation-check:
 		echo "isolation-check: $$brick default build is framework-free"; \
 	done
 
+# Compatibility target name; validates deterministic workspace package/brick structure.
 registry-check:
 	python3 -m unittest scripts/test_validate_brick_registry.py
 	python3 scripts/validate_brick_registry.py

@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "crates/auth",
+    "crates/storage",
     "crates/policy",
     "crates/mcp-transport",
     "crates/agent",
@@ -24,10 +26,12 @@ repository = "https://example.invalid/rust-factory"
 [workspace.dependencies]
 agentic-memory = { version = "=0.4.2", default-features = false }
 anyhow = "=1.0.100"
+biscuit-auth = { version = "=6.0.0", default-features = false }
 cap-std = "=4.0.3"
 opentelemetry = { version = "=0.32.0", default-features = false, features = ["logs"] }
 rmcp = { version = "=3.1.4", features = ["macros", "server", "transport-io"] }
 proptest = "=1.6.0"
+redb = { version = "=2.6.3", default-features = false }
 schemars = "=1.2.2"
 serdes-ai-evals = { version = "=0.2.6", default-features = false }
 serde = { version = "=1.0.228", features = ["derive"] }

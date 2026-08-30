@@ -1,6 +1,6 @@
 # Design
 
-Each new crate is a deterministic, compile-safe declaration that a capability family exists in the Factory portfolio and has reserved responsibility paths for agent maintenance. It is not a contract implementation.
+Each new crate is a deterministic, compile-safe declaration that a capability family has a reserved workspace package and responsibility paths for agent maintenance. It is not a contract implementation.
 
 ```text
 crates/cache/
@@ -19,6 +19,6 @@ role = "core"
 status = "scaffolded"
 ```
 
-A repository validator compares root Cargo workspace members, each package metadata record, the exact package tree, status-only source content, absent build/target/features/dependency configuration, and the Vision portfolio registry. Stdlib-only temporary-directory self-tests cover the validator's negative cases. The validator is local/deterministic and fails with actionable diagnostics; it does not derive status from code or emit a runtime API.
+A repository validator reconciles root Cargo workspace members, on-disk package directories, Cargo metadata, and each package metadata record, then validates the exact status-only package tree, source content, and absence of build/target/features/dependency configuration. It does not maintain or cross-check a roadmap: GitHub issues and GitHub Projects are authoritative for capability roadmap and taxonomy, and the Canonical Brick Standard is authoritative for scaffold and brick structure. Stdlib-only temporary-directory self-tests cover the validator's negative cases. The validator is local/deterministic and fails with actionable diagnostics; it does not derive status from code or emit a runtime API.
 
 This batch creates only family core trees. A later, separately approved semantic specification may replace the corresponding placeholder modules and test with a real core contract, then add only the adapter roles whose prerequisites are met.

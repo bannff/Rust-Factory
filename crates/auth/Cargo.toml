@@ -1,0 +1,27 @@
+[package]
+name = "auth"
+description = "Transport-independent token-native authorization contracts with a feature-gated biscuit adapter."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[package.metadata.rust-factory]
+family = "auth"
+role = "brick"
+status = "implemented"
+
+# No feature is enabled by default. This brick has no `mcp` feature on purpose:
+# the authorization substrate is not agent-drivable. The `biscuit` adapter
+# confines every `biscuit_auth` type behind its own feature gate.
+[features]
+biscuit = ["dep:biscuit-auth", "dep:prost"]
+
+[dependencies]
+sha2.workspace = true
+biscuit-auth = { workspace = true, optional = true, default-features = false, features = ["datalog-macro"] }
+prost = { version = "=0.10.4", optional = true }
+
+[lints]
+workspace = true
