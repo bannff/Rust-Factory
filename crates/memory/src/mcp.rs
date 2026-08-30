@@ -1623,15 +1623,9 @@ mod tests {
         // synchronous inside and never yield, which is itself part of the contract.
         fn drive<F: std::future::Future>(future: F) -> F::Output {
             use std::pin::pin;
-            use std::sync::Arc;
-            use std::task::{Context, Poll, Wake, Waker};
+            use std::task::{Context, Poll};
 
-            struct Noop;
-            impl Wake for Noop {
-                fn wake(self: Arc<Self>) {}
-            }
-            let waker = Waker::from(Arc::new(Noop));
-            let mut context = Context::from_waker(&waker);
+            let mut context = Context::from_waker(std::task::Waker::noop());
             match pin!(future).poll(&mut context) {
                 Poll::Ready(output) => output,
                 Poll::Pending => {

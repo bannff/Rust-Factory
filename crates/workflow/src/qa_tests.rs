@@ -227,6 +227,7 @@ fn changed_waker_updates_only_its_own_entry_without_growth() {
 struct ReentrantDropWake {
     state: Weak<CancellationState>,
 }
+#[allow(unknown_lints, clippy::manual_noop_waker)] // Wake is inert; Drop re-enters cancellation for lock-safety.
 impl Wake for ReentrantDropWake {
     fn wake(self: Arc<Self>) {}
 }

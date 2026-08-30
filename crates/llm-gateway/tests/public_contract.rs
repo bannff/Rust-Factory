@@ -6,7 +6,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll},
     time::Instant,
 };
 
@@ -20,14 +20,8 @@ use llm_gateway::{
     ToolCall, ToolDefinition, ToolName,
 };
 
-struct NoopWake;
-impl Wake for NoopWake {
-    fn wake(self: Arc<Self>) {}
-}
-
 fn poll_once<F: Future + ?Sized>(future: Pin<&mut F>) -> Poll<F::Output> {
-    let waker = Waker::from(Arc::new(NoopWake));
-    future.poll(&mut Context::from_waker(&waker))
+    future.poll(&mut Context::from_waker(std::task::Waker::noop()))
 }
 
 #[cfg(feature = "static")]
@@ -228,7 +222,10 @@ fn json_canonicalizes_recursively_and_enforces_canonical_byte_limit() {
         object.canonical(),
         r#"{"a":[{"c":3,"d":4}],"z":{"a":1,"b":2}}"#
     );
-    assert!(padded_object(MAX_JSON_OBJECT_BYTES, false).len() == MAX_JSON_OBJECT_BYTES);
+    assert_eq!(
+        padded_object(MAX_JSON_OBJECT_BYTES, false).len(),
+        MAX_JSON_OBJECT_BYTES
+    );
     let overhead = r#"{"pad":""}"#.len();
     let oversized = format!(
         r#"{{"pad":"{}"}}"#,
@@ -315,7 +312,7 @@ fn tool_description_and_request_count_and_schema_aggregate_limits_are_exact() {
     let exact_aggregate = (0..4)
         .map(|i| tool(&format!("s{i}"), padded_object(MAX_JSON_OBJECT_BYTES, true)))
         .collect();
-    assert!(request_with_tools(exact_aggregate).tools().len() == 4);
+    assert_eq!(request_with_tools(exact_aggregate).tools().len(), 4);
     let over_aggregate = (0..4)
         .map(|i| tool(&format!("s{i}"), padded_object(MAX_JSON_OBJECT_BYTES, true)))
         .chain([tool("extra", object_schema())])

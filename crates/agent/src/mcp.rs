@@ -534,7 +534,7 @@ mod migration_tests {
         future::Future,
         pin::Pin,
         sync::{Arc, Mutex},
-        task::{Context, Poll, Wake, Waker},
+        task::{Context, Poll},
         time::Instant,
     };
 
@@ -631,13 +631,8 @@ mod migration_tests {
         }
     }
 
-    struct NoopWake;
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
     fn poll_ready<T>(future: impl Future<Output = T>) -> T {
-        let waker = Waker::from(Arc::new(NoopWake));
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(std::task::Waker::noop());
         let mut future = Box::pin(future);
         match Future::poll(Pin::as_mut(&mut future), &mut context) {
             Poll::Ready(value) => value,
@@ -870,8 +865,7 @@ mod migration_tests {
             id: "agent".to_owned(),
             input: String::new(),
         }));
-        let waker = Waker::from(Arc::new(NoopWake));
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(std::task::Waker::noop());
         assert!(Future::poll(future.as_mut(), &mut context).is_pending());
         assert_eq!(*control_calls.lock().expect("control calls"), 1);
         assert_eq!(*provider_calls.lock().expect("provider calls"), 1);
