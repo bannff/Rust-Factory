@@ -20,7 +20,8 @@ schema, error-framework, filesystem, or async-runtime dependency.
 | `crates/storage` | `local`, `redb`, `settings` | Bounded authoritative tenant- and namespace-scoped versioned objects, with a volatile local adapter and an `ImmediateCommit` redb adapter. No consumer migration or MCP surface in V1. |
 | `crates/memory` | `local`, `agentic`, `settings`, `mcp` | Tenant-scoped agent memory behind one framework-agnostic port. Two selectable backends and a five-tool agent surface; no durable adapter. |
 | `crates/observability` | `local`, `opentelemetry`, `settings`, `mcp` | Bounded tenant-scoped operational logs with an evicting process-local reader, metadata-only OpenTelemetry API submission, and Policy-gated inspection; no durable audit/evidence guarantee. |
-| `crates/{model-gateway,sandbox}` | — | Status-only scaffolds for the families the autonomous loop drives next; their provisional ports still live in `agent`. |
+| `crates/llm-gateway` | `static`, `genai` | **Implemented.** Bounded non-streaming `LlmProvider` core with deterministic static and injected-client genai adapters, Agent/Workflow async migration, trusted invocation context, tenant-isolation coverage, and bounded process-local broadcast cancellation. No MCP or settings surface, retries, streaming, remote-abort acknowledgement, durability, exactly-once, recovery, or process-boundary guarantee. No deployable composition exists. Composition owns configured clients, runtime/timer and deadline wake mechanics, stable invocation keys, cancellation source, credentials, endpoint/egress/TLS/proxy policy, concurrency, task supervision, lifecycle, and shutdown. |
+| `crates/sandbox` | — | Status-only scaffold; its provisional port still lives in `agent`. |
 | `crates/mcp-transport` | — | Shared bounded MCP stdio transport. Owns no capability. |
 
 A `memory`, `local`, or `fs` module is a deterministic process-local adapter: no

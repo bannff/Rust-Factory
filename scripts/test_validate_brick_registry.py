@@ -739,6 +739,24 @@ status = "implemented"
         )
         path.unlink()
 
+    def test_genai_is_accepted_only_in_genai(self) -> None:
+        path = self.write_brick_source("src/genai.rs", "use genai::Client;\n")
+        validator.validate_adapter_isolation(self.implemented_dir)
+        path.unlink()
+
+        for relative_path in ("src/lib.rs", "src/mcp.rs"):
+            with self.subTest(relative_path=relative_path):
+                original = (self.implemented_dir / "src/lib.rs").read_text(
+                    encoding="utf-8"
+                )
+                self.write_brick_source(relative_path, "use genai::Client;\n")
+                self.assert_rejected(
+                    lambda: validator.validate_adapter_isolation(self.implemented_dir)
+                )
+                if relative_path != "src/lib.rs":
+                    (self.implemented_dir / relative_path).unlink()
+                self.write_brick_source("src/lib.rs", original)
+
     def test_redb_is_accepted_only_in_redb(self) -> None:
         path = self.write_brick_source("src/redb.rs", "use redb::Database;\n")
         validator.validate_adapter_isolation(self.implemented_dir)
@@ -780,6 +798,8 @@ status = "implemented"
             "src/mcp/dto.rs": "mcp",
             "src/mcp/nested/deep.rs": "mcp",
             "src/fs.rs": "fs",
+            "src/static.rs": "static",
+            "src/genai.rs": "genai",
         }
         for relative_path, expected in cases.items():
             with self.subTest(relative_path=relative_path):
@@ -881,9 +901,10 @@ status = "implemented"
     def test_accepts_feature_gated_adapter_module_declaration(self) -> None:
         for module in sorted(validator.ADAPTER_MODULE_NAMES):
             with self.subTest(module=module):
+                identifier = "r#static" if module == "static" else module
                 self.write_brick_source(
                     "src/lib.rs",
-                    f'#[cfg(feature = "{module}")]\npub mod {module};\n',
+                    f'#[cfg(feature = "{module}")]\npub mod {identifier};\n',
                 )
                 self.write_brick_source(f"src/{module}.rs", "// adapter\n")
                 validator.validate_conditional_derives(self.implemented_dir)
@@ -911,6 +932,8 @@ status = "implemented"
             "pub fn leak(_input: crate::mcp::Dto) {}\n",
             "use crate::mcp::Dto;\n",
             "type Alias = crate :: fs :: Writer;\n",
+            "fn static_leak(_input: crate::r#static::Fixture) {}\n",
+            "use crate::genai::Provider;\n",
         ):
             with self.subTest(body=body):
                 original = (self.implemented_dir / "src/lib.rs").read_text(

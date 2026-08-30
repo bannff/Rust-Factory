@@ -11,11 +11,11 @@
 #![allow(clippy::unused_async_trait_impl)]
 
 use crate::{
-    AgentDefinitionV1, AgentId, AgentRegistry, CommunicationPolicy, DefinitionError,
+    AgentDefinitionV1, AgentId, AgentRegistry, CommunicationPolicy, CorrelationId, DefinitionError,
     DefinitionStore, DefinitionVersion, EffectiveCapabilityCeilingV1, ExecutionLimits,
-    KnowledgePolicy, KnowledgeStore, LocalAgentRuntime, MAX_INPUT_BYTES, MemoryPolicy, MemoryStore,
-    ModelPolicy, ModelProvider, PublicErrorCode, ReferenceCatalog, Sandbox, SandboxPolicy,
-    ToolRegistry, validate_definition,
+    InvocationContextV1, KnowledgePolicy, KnowledgeStore, LocalAgentRuntime, MAX_INPUT_BYTES,
+    MemoryPolicy, MemoryStore, ModelPolicy, PrincipalId, PublicErrorCode, ReferenceCatalog,
+    RequestId, Sandbox, SandboxPolicy, TenantId, ToolRegistry, validate_definition,
 };
 use anyhow::{Context, Result};
 use policy::{
@@ -45,6 +45,18 @@ pub trait TrustedContextSource: Send + Sync {
     fn resolve(&self) -> std::result::Result<TrustedContextV1, DefinitionError>;
 }
 
+/// Owned request-scoped invocation controls supplied by composition.
+pub trait InvocationControlBundle: Send {
+    fn control(&self) -> llm_gateway::InvocationControl<'_>;
+}
+
+/// Host-owned factory for one request-scoped key, cancellation signal, and deadline signal.
+///
+/// Implementations provide wake mechanics but Agent creates no timer, runtime, or thread.
+pub trait InvocationControlSource: Send + Sync {
+    fn create(&self) -> std::result::Result<Box<dyn InvocationControlBundle>, DefinitionError>;
+}
+
 #[derive(Clone, Copy)]
 enum PolicyGateError {
     Denied,
@@ -52,6 +64,7 @@ enum PolicyGateError {
 }
 
 struct AuthorizedAgentContext {
+    trusted: TrustedContextV1,
     grant: GrantV1,
 }
 
@@ -98,7 +111,10 @@ where
         if supplied_digest != expected_digest {
             return Err(PolicyGateError::Failed);
         }
-        Ok(AuthorizedAgentContext { grant })
+        Ok(AuthorizedAgentContext {
+            trusted: request.context,
+            grant,
+        })
     }
 }
 
@@ -186,7 +202,7 @@ pub struct AgentDefinitionMcp<S, C, M, T, MM, K, SB, TS, P>
 where
     S: DefinitionStore,
     C: ReferenceCatalog,
-    M: ModelProvider,
+    M: llm_gateway::LlmProvider,
     T: ToolRegistry,
     MM: MemoryStore,
     K: KnowledgeStore,
@@ -201,13 +217,14 @@ where
     knowledge: K,
     sandbox: SB,
     resolver: AgentPolicyContextResolver<TS, P>,
+    invocation_control: Box<dyn InvocationControlSource>,
     tool_router: ToolRouter<Self>,
 }
 impl<S, C, M, T, MM, K, SB, TS, P> AgentDefinitionMcp<S, C, M, T, MM, K, SB, TS, P>
 where
     S: DefinitionStore + 'static,
     C: ReferenceCatalog + 'static,
-    M: ModelProvider + 'static,
+    M: llm_gateway::LlmProvider + 'static,
     T: ToolRegistry + 'static,
     MM: MemoryStore + 'static,
     K: KnowledgeStore + 'static,
@@ -226,6 +243,7 @@ where
         knowledge: K,
         sandbox: SB,
         resolver: AgentPolicyContextResolver<TS, P>,
+        invocation_control: Box<dyn InvocationControlSource>,
     ) -> std::result::Result<Self, DefinitionError> {
         Ok(Self {
             registry: AgentRegistry::new(builtins, store, catalog)?,
@@ -235,6 +253,7 @@ where
             knowledge,
             sandbox,
             resolver,
+            invocation_control,
             tool_router: Self::tool_router(),
         })
     }
@@ -288,7 +307,7 @@ where
         serialize(json!({"id": definition.id.as_str(), "registered": true}))
     }
 
-    fn invoke_json(&self, input: InvokeInput) -> Result<String> {
+    async fn invoke_json(&self, input: InvokeInput) -> Result<String> {
         let id = AgentId::new(input.id).map_err(|_| anyhow::anyhow!("invalid_definition"))?;
         if input.input.len() > MAX_INPUT_BYTES {
             return Err(anyhow::anyhow!("limit_exceeded"));
@@ -297,6 +316,7 @@ where
             .resolver
             .resolve_and_authorize(CapabilityV1::AgentInvoke)
             .map_err(policy_error)?;
+        let context = invocation_context(authorized.trusted).map_err(domain_error)?;
         let ceiling = EffectiveCapabilityCeilingV1 {
             allowed_tool_ids: authorized.grant.allowed_tool_ids,
             memory_enabled: authorized.grant.memory_enabled,
@@ -304,6 +324,7 @@ where
             sandbox_execution_allowed: authorized.grant.sandbox_execution_allowed,
             communication_allowed: authorized.grant.communication_allowed,
         };
+        let controls = self.invocation_control.create().map_err(domain_error)?;
         let runtime = LocalAgentRuntime::new(
             &self.registry,
             &self.model,
@@ -313,7 +334,8 @@ where
             &self.sandbox,
         );
         let result = runtime
-            .invoke_with_ceiling(&id, input.input, &ceiling)
+            .invoke_with_ceiling(context, &id, input.input, &ceiling, controls.control())
+            .await
             .map_err(domain_error)?;
         invocation_json(result)
     }
@@ -324,7 +346,7 @@ impl<S, C, M, T, MM, K, SB, TS, P> AgentDefinitionMcp<S, C, M, T, MM, K, SB, TS,
 where
     S: DefinitionStore + 'static,
     C: ReferenceCatalog + 'static,
-    M: ModelProvider + 'static,
+    M: llm_gateway::LlmProvider + 'static,
     T: ToolRegistry + 'static,
     MM: MemoryStore + 'static,
     K: KnowledgeStore + 'static,
@@ -371,7 +393,7 @@ where
         description = "Invoke one bounded local agent attempt through injected ports."
     )]
     async fn agent_runtime_invoke(&self, Parameters(input): Parameters<InvokeInput>) -> String {
-        tool_response(self.invoke_json(input))
+        tool_response(self.invoke_json(input).await)
     }
 }
 
@@ -381,7 +403,7 @@ impl<S, C, M, T, MM, K, SB, TS, P> ServerHandler
 where
     S: DefinitionStore + 'static,
     C: ReferenceCatalog + 'static,
-    M: ModelProvider + 'static,
+    M: llm_gateway::LlmProvider + 'static,
     T: ToolRegistry + 'static,
     MM: MemoryStore + 'static,
     K: KnowledgeStore + 'static,
@@ -389,6 +411,17 @@ where
     TS: TrustedContextSource + 'static,
     P: PolicyResolver + 'static,
 {
+}
+
+fn invocation_context(
+    trusted: TrustedContextV1,
+) -> std::result::Result<InvocationContextV1, DefinitionError> {
+    Ok(InvocationContextV1::new(
+        TenantId::new(trusted.tenant_id.as_str())?,
+        PrincipalId::new(trusted.principal_id.as_str())?,
+        RequestId::new(trusted.request_id.as_str())?,
+        CorrelationId::new(trusted.correlation_id.as_str())?,
+    ))
 }
 
 fn policy_error(error: PolicyGateError) -> anyhow::Error {
@@ -408,13 +441,33 @@ fn definition_json(definition: &AgentDefinitionV1) -> Result<String> {
 fn invocation_json(result: crate::InvocationResult) -> Result<String> {
     serialize(
         json!({"capability_scope_digest": result.capability_scope_digest, "events": result.events.into_iter().map(|event| match event {
-        crate::InvocationEvent::ModelInvoked => json!({"type":"model_invoked"}),
-        crate::InvocationEvent::MemoryRecalled { values } => json!({"type":"memory_recalled", "values":values}),
-        crate::InvocationEvent::MemoryWritten => json!({"type":"memory_written"}),
-        crate::InvocationEvent::KnowledgeSearched { results } => json!({"type":"knowledge_searched", "results":results}),
-        crate::InvocationEvent::SandboxCompleted { output } => json!({"type":"sandbox_completed", "output":output}),
-        crate::InvocationEvent::ToolCompleted { tool_id, output } => json!({"type":"tool_completed", "tool_id":tool_id, "output":output}),
-    }).collect::<Vec<_>>(), "output": result.output}),
+            crate::InvocationEvent::ModelInvoked => json!({"type":"model_invoked"}),
+            crate::InvocationEvent::MemoryRecalled { values } => json!({"type":"memory_recalled", "values":values}),
+            crate::InvocationEvent::MemoryWritten => json!({"type":"memory_written"}),
+            crate::InvocationEvent::KnowledgeSearched { results } => json!({"type":"knowledge_searched", "results":results}),
+            crate::InvocationEvent::SandboxCompleted { output } => json!({"type":"sandbox_completed", "output":output}),
+            crate::InvocationEvent::ToolCompleted { tool_id, output } => json!({"type":"tool_completed", "tool_id":tool_id, "output":output}),
+        }).collect::<Vec<_>>(), "output": result.output, "model_evidence": {
+            "provider_id": result.model_evidence.provider_id,
+            "model_id": result.model_evidence.model_id,
+            "provider_request_id": result.model_evidence.provider_request_id,
+            "finish_reason": match result.model_evidence.finish_reason {
+                crate::InvocationModelFinishReason::Stop => "stop",
+                crate::InvocationModelFinishReason::Length => "length",
+                crate::InvocationModelFinishReason::ToolCalls => "tool_calls",
+                crate::InvocationModelFinishReason::ContentFilter => "content_filter",
+                crate::InvocationModelFinishReason::Other => "other",
+            },
+            "token_usage": result.model_evidence.token_usage.map(|usage| json!({
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "total_tokens": usage.total_tokens,
+            })),
+            "idempotency": match result.model_evidence.idempotency {
+                crate::InvocationModelIdempotency::Unsupported => "unsupported",
+                crate::InvocationModelIdempotency::Accepted => "accepted",
+            },
+        }}),
     )
 }
 fn serialize(value: serde_json::Value) -> Result<String> {
@@ -433,7 +486,8 @@ fn tool_response(response: Result<String>) -> String {
 fn is_public_code(value: &str) -> bool {
     matches!(
         value,
-        "invalid_definition"
+        "invalid_request"
+            | "invalid_definition"
             | "invalid_reference"
             | "reference_unavailable"
             | "not_found"
@@ -445,11 +499,14 @@ fn is_public_code(value: &str) -> bool {
             | "sandbox_denied"
             | "adapter_failure"
             | "limit_exceeded"
+            | "cancelled"
+            | "deadline_exceeded"
             | "operation_failed"
     )
 }
 const fn public_code(code: PublicErrorCode) -> &'static str {
     match code {
+        PublicErrorCode::InvalidRequest => "invalid_request",
         PublicErrorCode::InvalidDefinition => "invalid_definition",
         PublicErrorCode::InvalidReference => "invalid_reference",
         PublicErrorCode::ReferenceUnavailable => "reference_unavailable",
@@ -462,6 +519,8 @@ const fn public_code(code: PublicErrorCode) -> &'static str {
         PublicErrorCode::SandboxDenied => "sandbox_denied",
         PublicErrorCode::AdapterFailure => "adapter_failure",
         PublicErrorCode::LimitExceeded => "limit_exceeded",
+        PublicErrorCode::Cancelled => "cancelled",
+        PublicErrorCode::DeadlineExceeded => "deadline_exceeded",
     }
 }
 #[must_use]
@@ -470,714 +529,443 @@ pub const fn tool_names() -> [&'static str; 5] {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use crate::{
-        DenySandbox, FixedToolRegistry, InMemoryDefinitionStore, InMemoryMemoryStore,
-        ModelResponse, StaticKnowledgeStore, StaticModelProvider, StaticReferenceCatalog,
+mod migration_tests {
+    use std::{
+        future::Future,
+        pin::Pin,
+        sync::{Arc, Mutex},
+        task::{Context, Poll, Wake, Waker},
+        time::Instant,
     };
-    use policy::{CorrelationId, PrincipalId, RequestId, TenantId, allow_decision, deny_decision};
+
+    use llm_gateway::{
+        CancellationFuture, CancellationSignal, DeadlineFuture, DeadlineSignal, FinishReason,
+        IdempotencyDisposition, IdempotencyKey, InvocationControl, LlmProvider, ProviderFuture,
+        r#static::{StaticFixture, StaticProvider},
+    };
+    use policy::{
+        AuthorizationDecisionV1, AuthorizationRequestV1, CorrelationId as PolicyCorrelationId,
+        GrantV1, PolicyResolver, PrincipalId as PolicyPrincipalId, RequestId as PolicyRequestId,
+        TenantId as PolicyTenantId, TrustedContextV1, allow_decision, deny_decision,
+    };
 
     use super::*;
+    use crate::{
+        AgentDefinitionV1, CommunicationPolicy, DefinitionVersion, DenySandbox, FixedToolRegistry,
+        InMemoryDefinitionStore, InMemoryMemoryStore, KnowledgePolicy, MemoryPolicy, ModelPolicy,
+        SandboxPolicy, StaticKnowledgeStore, StaticReferenceCatalog,
+    };
 
-    #[derive(Clone)]
-    struct Source {
-        context: std::result::Result<TrustedContextV1, DefinitionError>,
-        calls: Arc<Mutex<u32>>,
+    struct Cancellation;
+    impl CancellationSignal for Cancellation {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+        fn cancelled(&self) -> CancellationFuture<'_> {
+            Box::pin(std::future::pending())
+        }
     }
-    impl TrustedContextSource for Source {
-        fn resolve(&self) -> std::result::Result<TrustedContextV1, DefinitionError> {
-            *self.calls.lock().expect("source calls") += 1;
-            self.context.clone()
+    struct Deadline;
+    impl DeadlineSignal for Deadline {
+        fn instant(&self) -> Instant {
+            Instant::now()
+        }
+        fn is_elapsed(&self) -> bool {
+            false
+        }
+        fn elapsed(&self) -> DeadlineFuture<'_> {
+            Box::pin(std::future::pending())
+        }
+    }
+    struct Bundle {
+        key: IdempotencyKey,
+        cancellation: Cancellation,
+        deadline: Deadline,
+    }
+    impl InvocationControlBundle for Bundle {
+        fn control(&self) -> InvocationControl<'_> {
+            InvocationControl {
+                idempotency_key: &self.key,
+                cancellation: &self.cancellation,
+                deadline: &self.deadline,
+            }
+        }
+    }
+    struct ControlSource(Arc<Mutex<u32>>);
+    impl InvocationControlSource for ControlSource {
+        fn create(&self) -> std::result::Result<Box<dyn InvocationControlBundle>, DefinitionError> {
+            *self.0.lock().expect("control calls") += 1;
+            Ok(Box::new(Bundle {
+                key: IdempotencyKey::new("mcp-attempt").expect("key"),
+                cancellation: Cancellation,
+                deadline: Deadline,
+            }))
         }
     }
 
     #[derive(Clone)]
-    struct Policy {
-        allow: bool,
-        tamper: bool,
-        grant: Option<GrantV1>,
-        calls: Arc<Mutex<Vec<CapabilityV1>>>,
+    struct ContextSource;
+    impl TrustedContextSource for ContextSource {
+        fn resolve(&self) -> std::result::Result<TrustedContextV1, DefinitionError> {
+            Ok(TrustedContextV1 {
+                tenant_id: PolicyTenantId::new("host-tenant").expect("tenant"),
+                principal_id: PolicyPrincipalId::new("host-principal").expect("principal"),
+                request_id: PolicyRequestId::new("host-request").expect("request"),
+                correlation_id: PolicyCorrelationId::new("host-correlation").expect("correlation"),
+            })
+        }
     }
+    #[derive(Clone)]
+    struct Policy(bool);
     impl PolicyResolver for Policy {
         fn authorize(&self, request: AuthorizationRequestV1) -> AuthorizationDecisionV1 {
-            self.calls
-                .lock()
-                .expect("policy calls")
-                .push(request.capability);
-            if !self.allow {
-                return deny_decision();
-            }
-            let AuthorizationDecisionV1::Allow {
-                effective_grant,
-                decision_digest,
-            } = allow_decision(
-                &request,
-                &self.grant.clone().unwrap_or_else(|| {
-                    GrantV1::new(Vec::<String>::new(), false, false, false, false).expect("grant")
-                }),
-            )
-            .expect("allow decision")
-            else {
-                unreachable!();
-            };
-            AuthorizationDecisionV1::Allow {
-                effective_grant,
-                decision_digest: if self.tamper {
-                    "0".repeat(64)
-                } else {
-                    decision_digest
-                },
+            if self.0 {
+                allow_decision(
+                    &request,
+                    &GrantV1::new(Vec::<String>::new(), false, false, false, false).expect("grant"),
+                )
+                .expect("decision")
+            } else {
+                deny_decision()
             }
         }
     }
 
-    type TestMcp = AgentDefinitionMcp<
-        InMemoryDefinitionStore,
-        StaticReferenceCatalog,
-        StaticModelProvider,
-        FixedToolRegistry,
-        InMemoryMemoryStore,
-        StaticKnowledgeStore,
-        DenySandbox,
-        Source,
-        Policy,
-    >;
-
-    fn trusted() -> TrustedContextV1 {
-        TrustedContextV1 {
-            tenant_id: TenantId::new("tenant").expect("tenant"),
-            principal_id: PrincipalId::new("principal").expect("principal"),
-            request_id: RequestId::new("request").expect("request"),
-            correlation_id: CorrelationId::new("correlation").expect("correlation"),
+    struct NoopWake;
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+    fn poll_ready<T>(future: impl Future<Output = T>) -> T {
+        let waker = Waker::from(Arc::new(NoopWake));
+        let mut context = Context::from_waker(&waker);
+        let mut future = Box::pin(future);
+        match Future::poll(Pin::as_mut(&mut future), &mut context) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("static invocation unexpectedly pending"),
         }
     }
-    fn definition() -> AgentDefinitionInput {
-        AgentDefinitionInput {
-            id: "agent".to_owned(),
+
+    fn definition() -> AgentDefinitionV1 {
+        AgentDefinitionV1 {
+            version: DefinitionVersion::V1,
+            id: AgentId::new("agent").expect("id"),
             name: "Agent".to_owned(),
-            description: "Test agent".to_owned(),
-            model_reference: "static".to_owned(),
+            description: "MCP migration fixture".to_owned(),
+            model: ModelPolicy {
+                reference: "static.model".to_owned(),
+            },
             instructions: "Respond.".to_owned(),
             skills: vec![],
             steering: vec![],
             allowed_tool_ids: vec![],
-            memory_enabled: false,
-            memory_max_items: 0,
-            knowledge_enabled: false,
-            knowledge_max_results: 0,
-            sandbox_allow_execution: false,
-            communication_allow_messages: false,
-            max_tool_calls: 1,
-            max_output_bytes: 10,
+            memory: MemoryPolicy {
+                enabled: false,
+                max_items: 0,
+            },
+            knowledge: KnowledgePolicy {
+                enabled: false,
+                max_results: 0,
+            },
+            sandbox: SandboxPolicy {
+                allow_execution: false,
+            },
+            communication: CommunicationPolicy {
+                allow_messages: false,
+            },
+            limits: ExecutionLimits {
+                max_tool_calls: 1,
+                max_output_bytes: 128,
+            },
         }
     }
-    type SourceCalls = Arc<Mutex<u32>>;
-    type PolicyCalls = Arc<Mutex<Vec<CapabilityV1>>>;
-    type SchemaCase = (
-        &'static str,
-        serde_json::Value,
-        fn(serde_json::Value) -> bool,
-        serde_json::Value,
-    );
 
-    fn service(source_ok: bool, allow: bool, tamper: bool) -> (TestMcp, SourceCalls, PolicyCalls) {
-        service_with_context(trusted(), source_ok, allow, tamper)
-    }
-    fn service_with_context(
-        context: TrustedContextV1,
-        source_ok: bool,
+    fn service(
         allow: bool,
-        tamper: bool,
-    ) -> (TestMcp, SourceCalls, PolicyCalls) {
-        let source_calls = Arc::new(Mutex::new(0));
-        let policy_calls = Arc::new(Mutex::new(vec![]));
-        let resolver = AgentPolicyContextResolver::new(
-            Source {
-                context: if source_ok {
-                    Ok(context)
-                } else {
-                    Err(DefinitionError::AdapterFailure)
-                },
-                calls: Arc::clone(&source_calls),
-            },
-            Policy {
-                allow,
-                tamper,
-                grant: None,
-                calls: Arc::clone(&policy_calls),
-            },
-        );
-        let server = TestMcp::new(
-            vec![definition().clone().into_core().expect("definition")],
+        control_calls: Arc<Mutex<u32>>,
+    ) -> AgentDefinitionMcp<
+        InMemoryDefinitionStore,
+        StaticReferenceCatalog,
+        StaticProvider,
+        FixedToolRegistry,
+        InMemoryMemoryStore,
+        StaticKnowledgeStore,
+        DenySandbox,
+        ContextSource,
+        Policy,
+    > {
+        AgentDefinitionMcp::new(
+            vec![definition()],
             InMemoryDefinitionStore::default(),
-            StaticReferenceCatalog::new(["static".to_owned()], [], [], []),
-            StaticModelProvider::new(ModelResponse {
-                output: "ok".to_owned(),
-                tool_calls: vec![],
-                capability_requests: vec![],
-            }),
+            StaticReferenceCatalog::new(["static.model".to_owned()], [], [], []),
+            StaticProvider::success(
+                StaticFixture::new(
+                    "ok",
+                    vec![],
+                    None,
+                    FinishReason::Stop,
+                    None,
+                    IdempotencyDisposition::Unsupported,
+                )
+                .expect("fixture"),
+            ),
             FixedToolRegistry::default(),
             InMemoryMemoryStore::default(),
             StaticKnowledgeStore::default(),
             DenySandbox,
-            resolver,
+            AgentPolicyContextResolver::new(ContextSource, Policy(allow)),
+            Box::new(ControlSource(control_calls)),
         )
-        .expect("server");
-        (server, source_calls, policy_calls)
+        .expect("service")
     }
-    #[derive(Clone, Copy)]
-    enum Operation {
-        Validate,
-        Get,
-        List,
-        Register,
-        Invoke,
-    }
-    impl Operation {
-        const fn capability(self) -> CapabilityV1 {
-            match self {
-                Self::Validate => CapabilityV1::AgentDefinitionValidate,
-                Self::Get => CapabilityV1::AgentDefinitionGet,
-                Self::List => CapabilityV1::AgentDefinitionList,
-                Self::Register => CapabilityV1::AgentDefinitionRegister,
-                Self::Invoke => CapabilityV1::AgentInvoke,
-            }
-        }
-    }
-    fn call(server: &TestMcp, operation: Operation) -> String {
-        match operation {
-            Operation::Validate => server.validate_json(definition()).expect("validate"),
-            Operation::Get => tool_response(server.get_json(AgentIdInput {
-                id: "agent".to_owned(),
-            })),
-            Operation::List => tool_response(server.list_json()),
-            Operation::Register => tool_response(server.register_json(AgentDefinitionInput {
-                id: "registered".to_owned(),
-                ..definition()
-            })),
-            Operation::Invoke => tool_response(server.invoke_json(InvokeInput {
+
+    #[test]
+    fn mcp_awaits_host_owned_controls_only_after_policy_allows() {
+        let denied_calls = Arc::new(Mutex::new(0));
+        let denied = service(false, Arc::clone(&denied_calls));
+        assert_eq!(
+            tool_response(poll_ready(denied.invoke_json(InvokeInput {
                 id: "agent".to_owned(),
                 input: String::new(),
-            })),
-        }
+            }))),
+            "{\"error\":\"not_found\"}"
+        );
+        assert_eq!(*denied_calls.lock().expect("calls"), 0);
+
+        let allowed_calls = Arc::new(Mutex::new(0));
+        let allowed = service(true, Arc::clone(&allowed_calls));
+        let result = poll_ready(allowed.invoke_json(InvokeInput {
+            id: "agent".to_owned(),
+            input: String::new(),
+        }))
+        .expect("invoke");
+        assert!(result.contains("\"output\":\"ok\""));
+        assert!(result.contains("\"provider_id\":\"static\""));
+        assert_eq!(*allowed_calls.lock().expect("calls"), 1);
     }
 
     #[test]
-    fn policy_gate_maps_failures_and_authorizes_exact_capabilities() {
-        for (source_ok, allow, tamper, expected) in [
-            (false, true, false, "operation_failed"),
-            (true, false, false, "not_found"),
-            (true, true, true, "operation_failed"),
-        ] {
-            for operation in [
-                Operation::Validate,
-                Operation::Get,
-                Operation::List,
-                Operation::Register,
-                Operation::Invoke,
-            ] {
-                let (server, source_calls, policy_calls) = service(source_ok, allow, tamper);
-                assert!(call(&server, operation).contains(expected));
-                assert_eq!(*source_calls.lock().expect("source calls"), 1);
-                let calls = policy_calls.lock().expect("policy calls");
-                if source_ok {
-                    assert_eq!(calls.as_slice(), &[operation.capability()]);
-                } else {
-                    assert!(calls.is_empty());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn malformed_or_oversized_input_is_pre_policy() {
-        let (server, source_calls, policy_calls) = service(true, true, false);
+    fn invoke_ingress_is_closed_and_oversized_input_is_pre_policy_and_pre_control() {
         assert!(
-            server
-                .get_json(AgentIdInput {
-                    id: "Invalid".to_owned()
-                })
-                .is_err()
+            serde_json::from_value::<InvokeInput>(json!({
+                "id": "agent",
+                "input": "request",
+                "tenant_id": "caller-controlled"
+            }))
+            .is_err()
         );
-        assert_eq!(*source_calls.lock().expect("source calls"), 0);
-        assert!(policy_calls.lock().expect("policy calls").is_empty());
-        assert_eq!(
-            tool_response(server.invoke_json(InvokeInput {
-                id: "agent".to_owned(),
-                input: "x".repeat(MAX_INPUT_BYTES + 1)
-            })),
-            "{\"error\":\"limit_exceeded\"}"
-        );
-        assert_eq!(*source_calls.lock().expect("source calls"), 0);
-        assert!(policy_calls.lock().expect("policy calls").is_empty());
+        let schema = serde_json::to_value(schemars::schema_for!(InvokeInput)).expect("schema");
+        assert_eq!(schema["additionalProperties"], false);
+
+        let control_calls = Arc::new(Mutex::new(0));
+        let server = service(true, Arc::clone(&control_calls));
+        let result = tool_response(poll_ready(server.invoke_json(InvokeInput {
+            id: "agent".to_owned(),
+            input: "x".repeat(MAX_INPUT_BYTES + 1),
+        })));
+        assert_eq!(result, "{\"error\":\"limit_exceeded\"}");
+        assert_eq!(*control_calls.lock().expect("calls"), 0);
     }
 
     #[test]
-    fn prohibited_mcp_fields_are_rejected_by_every_typed_parameter_schema_pre_policy() {
-        // `#[tool]` generates private parameter extraction. These serde/schema checks cover each
-        // generated handler's typed input, including the zero-argument list input, before a
-        // handler can resolve trusted context, policy, or an injected domain port.
-        let prohibited = [
+    fn invoke_output_is_an_exact_safe_projection() {
+        let server = service(true, Arc::new(Mutex::new(0)));
+        let serialized = poll_ready(server.invoke_json(InvokeInput {
+            id: "agent".to_owned(),
+            input: "request".to_owned(),
+        }))
+        .expect("invoke");
+        let value: serde_json::Value = serde_json::from_str(&serialized).expect("json");
+        let root = value.as_object().expect("object");
+        assert_eq!(
+            root.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "capability_scope_digest",
+                "events",
+                "model_evidence",
+                "output"
+            ]
+        );
+        let evidence = root["model_evidence"].as_object().expect("evidence");
+        assert_eq!(
+            evidence.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "finish_reason",
+                "idempotency",
+                "model_id",
+                "provider_id",
+                "provider_request_id",
+                "token_usage"
+            ]
+        );
+        for forbidden in [
+            "credential",
+            "endpoint",
+            "headers",
+            "raw_error",
+            "prompt",
+            "arguments",
             "tenant_id",
             "principal_id",
-            "request_id",
-            "correlation_id",
-            "grant",
-            "decision_digest",
-            "effective_capability_ceiling",
-        ];
-        let cases: [SchemaCase; 5] = [
-            (
-                "validate",
-                serde_json::to_value(definition()).expect("definition JSON"),
-                |value| serde_json::from_value::<AgentDefinitionInput>(value).is_err(),
-                serde_json::to_value(schemars::schema_for!(AgentDefinitionInput)).expect("schema"),
-            ),
-            (
-                "get",
-                json!({"id":"agent"}),
-                |value| serde_json::from_value::<AgentIdInput>(value).is_err(),
-                serde_json::to_value(schemars::schema_for!(AgentIdInput)).expect("schema"),
-            ),
-            (
-                "list",
-                json!({}),
-                |value| serde_json::from_value::<ListInput>(value).is_err(),
-                serde_json::to_value(schemars::schema_for!(ListInput)).expect("schema"),
-            ),
-            (
-                "register",
-                serde_json::to_value(definition()).expect("definition JSON"),
-                |value| serde_json::from_value::<AgentDefinitionInput>(value).is_err(),
-                serde_json::to_value(schemars::schema_for!(AgentDefinitionInput)).expect("schema"),
-            ),
-            (
-                "invoke",
-                json!({"id":"agent","input":"request"}),
-                |value| serde_json::from_value::<InvokeInput>(value).is_err(),
-                serde_json::to_value(schemars::schema_for!(InvokeInput)).expect("schema"),
-            ),
-        ];
-        for (operation, baseline, parse_rejects, schema) in cases {
-            assert_eq!(schema["additionalProperties"], false, "{operation} schema");
-            for field in prohibited {
-                let mut payload = baseline.clone();
-                payload
-                    .as_object_mut()
-                    .expect("parameter object")
-                    .insert(field.to_owned(), json!("untrusted"));
-                assert!(parse_rejects(payload), "{operation} accepted {field}");
-            }
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "MCP output leaked {forbidden}"
+            );
         }
     }
 
-    #[derive(Clone, Default)]
-    struct PortCalls(Arc<Mutex<Vec<&'static str>>>);
-    impl PortCalls {
-        fn record(&self, operation: &'static str) {
-            self.0.lock().expect("port calls").push(operation);
+    struct PendingModel {
+        calls: Arc<Mutex<u32>>,
+        dropped: Arc<Mutex<bool>>,
+    }
+    impl LlmProvider for PendingModel {
+        fn generate<'a>(
+            &'a self,
+            _: &'a llm_gateway::GenerateRequest,
+            _: InvocationControl<'a>,
+        ) -> ProviderFuture<'a> {
+            *self.calls.lock().expect("provider calls") += 1;
+            Box::pin(PendingModelFuture {
+                dropped: Arc::clone(&self.dropped),
+            })
         }
-        fn assert_empty(&self) {
-            assert!(self.0.lock().expect("port calls").is_empty());
+    }
+    struct PendingModelFuture {
+        dropped: Arc<Mutex<bool>>,
+    }
+    impl Future for PendingModelFuture {
+        type Output = std::result::Result<llm_gateway::GenerateResponse, llm_gateway::LlmError>;
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Pending
         }
-        fn clear(&self) {
-            self.0.lock().expect("port calls").clear();
+    }
+    impl Drop for PendingModelFuture {
+        fn drop(&mut self) {
+            *self.dropped.lock().expect("dropped") = true;
         }
     }
 
-    struct RecordingStore(PortCalls);
-    impl DefinitionStore for RecordingStore {
-        fn load(
-            &self,
-            _: &AgentId,
-        ) -> std::result::Result<Option<AgentDefinitionV1>, DefinitionError> {
-            self.0.record("store.load");
-            Ok(None)
-        }
-        fn list(&self) -> std::result::Result<Vec<AgentDefinitionV1>, DefinitionError> {
-            self.0.record("store.list");
-            Ok(vec![])
-        }
-        fn save(&self, _: AgentDefinitionV1) -> std::result::Result<(), DefinitionError> {
-            self.0.record("store.save");
-            Ok(())
-        }
-        fn delete(&self, _: &AgentId) -> std::result::Result<(), DefinitionError> {
-            self.0.record("store.delete");
-            Ok(())
-        }
+    #[test]
+    fn mcp_policy_precedes_control_and_provider_and_awaits_without_blocking() {
+        let provider_calls = Arc::new(Mutex::new(0));
+        let dropped = Arc::new(Mutex::new(false));
+        let control_calls = Arc::new(Mutex::new(0));
+        let server = AgentDefinitionMcp::new(
+            vec![definition()],
+            InMemoryDefinitionStore::default(),
+            StaticReferenceCatalog::new(["static.model".to_owned()], [], [], []),
+            PendingModel {
+                calls: Arc::clone(&provider_calls),
+                dropped: Arc::clone(&dropped),
+            },
+            FixedToolRegistry::default(),
+            InMemoryMemoryStore::default(),
+            StaticKnowledgeStore::default(),
+            DenySandbox,
+            AgentPolicyContextResolver::new(ContextSource, Policy(true)),
+            Box::new(ControlSource(Arc::clone(&control_calls))),
+        )
+        .expect("service");
+        let mut future = Box::pin(server.invoke_json(InvokeInput {
+            id: "agent".to_owned(),
+            input: String::new(),
+        }));
+        let waker = Waker::from(Arc::new(NoopWake));
+        let mut context = Context::from_waker(&waker);
+        assert!(Future::poll(future.as_mut(), &mut context).is_pending());
+        assert_eq!(*control_calls.lock().expect("control calls"), 1);
+        assert_eq!(*provider_calls.lock().expect("provider calls"), 1);
+        drop(future);
+        assert!(*dropped.lock().expect("dropped"));
     }
-    struct RecordingCatalog(PortCalls);
-    impl ReferenceCatalog for RecordingCatalog {
-        fn contains_model(&self, _: &str) -> std::result::Result<bool, DefinitionError> {
-            self.0.record("catalog.model");
-            Ok(true)
-        }
-        fn contains_skill(&self, _: &str) -> std::result::Result<bool, DefinitionError> {
-            self.0.record("catalog.skill");
-            Ok(true)
-        }
-        fn contains_steering(&self, _: &str) -> std::result::Result<bool, DefinitionError> {
-            self.0.record("catalog.steering");
-            Ok(true)
-        }
-        fn contains_tool(&self, _: &str) -> std::result::Result<bool, DefinitionError> {
-            self.0.record("catalog.tool");
-            Ok(true)
-        }
-    }
-    struct RecordingModel {
-        calls: PortCalls,
-        responses: Mutex<Vec<ModelResponse>>,
-    }
-    impl ModelProvider for RecordingModel {
-        fn invoke(
-            &self,
-            request: crate::ModelRequest,
-        ) -> std::result::Result<ModelResponse, DefinitionError> {
-            self.calls.record("model.invoke");
-            MODEL_SCOPES.with(|scopes| {
-                scopes
-                    .lock()
-                    .expect("model scopes")
-                    .push(request.capability_scope);
-            });
-            Ok(self.responses.lock().expect("responses").remove(0))
-        }
-    }
-    thread_local! { static MODEL_SCOPES: Mutex<Vec<crate::ResolvedCapabilityScope>> = const { Mutex::new(Vec::new()) }; }
-    struct RecordingTools(PortCalls);
-    impl ToolRegistry for RecordingTools {
-        fn resolve(&self, id: &str) -> std::result::Result<crate::ToolDescriptor, DefinitionError> {
-            self.0.record("tools.resolve");
-            Ok(crate::ToolDescriptor { id: id.to_owned() })
-        }
-        fn invoke(
-            &self,
-            _: &crate::ToolDescriptor,
-            _: crate::ToolRequest,
-        ) -> std::result::Result<String, DefinitionError> {
-            self.0.record("tools.invoke");
-            Ok("tool output".to_owned())
-        }
-    }
-    struct RecordingMemory(PortCalls);
-    impl MemoryStore for RecordingMemory {
+
+    struct CapturingMemory(Arc<Mutex<Option<InvocationContextV1>>>);
+    impl MemoryStore for CapturingMemory {
         fn recall(
             &self,
-            _: crate::MemoryRequest,
+            request: crate::MemoryRequest,
         ) -> std::result::Result<Vec<String>, DefinitionError> {
-            self.0.record("memory.recall");
+            *self.0.lock().expect("context") = Some(request.context);
             Ok(vec![])
         }
+
         fn write(
             &self,
-            _: crate::MemoryRequest,
+            request: crate::MemoryRequest,
             _: String,
         ) -> std::result::Result<(), DefinitionError> {
-            self.0.record("memory.write");
+            *self.0.lock().expect("context") = Some(request.context);
             Ok(())
         }
     }
-    struct RecordingKnowledge(PortCalls);
-    impl KnowledgeStore for RecordingKnowledge {
-        fn search(
-            &self,
-            _: crate::KnowledgeRequest,
-        ) -> std::result::Result<Vec<String>, DefinitionError> {
-            self.0.record("knowledge.search");
-            Ok(vec![])
-        }
-    }
-    struct RecordingSandbox(PortCalls);
-    impl Sandbox for RecordingSandbox {
-        fn execute(
-            &self,
-            _: crate::SandboxRequest,
-        ) -> std::result::Result<String, DefinitionError> {
-            self.0.record("sandbox.execute");
-            Ok("sandbox output".to_owned())
-        }
-    }
 
-    type RecordingMcp = AgentDefinitionMcp<
-        RecordingStore,
-        RecordingCatalog,
-        RecordingModel,
-        RecordingTools,
-        RecordingMemory,
-        RecordingKnowledge,
-        RecordingSandbox,
-        Source,
-        Policy,
-    >;
-    fn recording_service(
-        source_ok: bool,
-        allow: bool,
-        tamper: bool,
-        responses: Vec<ModelResponse>,
-    ) -> (RecordingMcp, SourceCalls, PolicyCalls, PortCalls) {
-        let source_calls = Arc::new(Mutex::new(0));
-        let policy_calls = Arc::new(Mutex::new(vec![]));
-        let ports = PortCalls::default();
-        let server = RecordingMcp::new(
-            vec![],
-            RecordingStore(ports.clone()),
-            RecordingCatalog(ports.clone()),
-            RecordingModel {
-                calls: ports.clone(),
-                responses: Mutex::new(responses),
-            },
-            RecordingTools(ports.clone()),
-            RecordingMemory(ports.clone()),
-            RecordingKnowledge(ports.clone()),
-            RecordingSandbox(ports.clone()),
-            AgentPolicyContextResolver::new(
-                Source {
-                    context: if source_ok {
-                        Ok(trusted())
-                    } else {
-                        Err(DefinitionError::AdapterFailure)
-                    },
-                    calls: Arc::clone(&source_calls),
-                },
-                Policy {
-                    allow,
-                    tamper,
-                    grant: None,
-                    calls: Arc::clone(&policy_calls),
-                },
-            ),
-        )
-        .expect("server");
-        (server, source_calls, policy_calls, ports)
-    }
-
-    fn recording_call(server: &RecordingMcp, operation: Operation) -> String {
-        match operation {
-            Operation::Validate => server.validate_json(definition()).expect("validate"),
-            Operation::Get => tool_response(server.get_json(AgentIdInput {
-                id: "agent".to_owned(),
-            })),
-            Operation::List => tool_response(server.list_json()),
-            Operation::Register => tool_response(server.register_json(AgentDefinitionInput {
-                id: "registered".to_owned(),
-                ..definition()
-            })),
-            Operation::Invoke => tool_response(server.invoke_json(InvokeInput {
-                id: "agent".to_owned(),
-                input: String::new(),
-            })),
+    #[derive(Clone)]
+    struct MemoryPolicyResolver;
+    impl PolicyResolver for MemoryPolicyResolver {
+        fn authorize(&self, request: AuthorizationRequestV1) -> AuthorizationDecisionV1 {
+            allow_decision(
+                &request,
+                &GrantV1::new(Vec::<String>::new(), true, false, false, false).expect("grant"),
+            )
+            .expect("decision")
         }
     }
 
     #[test]
-    fn policy_failures_are_pre_domain_for_every_mcp_operation() {
-        for (source_ok, allow, tamper, expected) in [
-            (false, true, false, "operation_failed"),
-            (true, false, false, "not_found"),
-            (true, true, true, "operation_failed"),
-        ] {
-            for operation in [
-                Operation::Validate,
-                Operation::Get,
-                Operation::List,
-                Operation::Register,
-                Operation::Invoke,
-            ] {
-                let (server, source_calls, policy_calls, ports) =
-                    recording_service(source_ok, allow, tamper, vec![]);
-                assert!(
-                    recording_call(&server, operation).contains(expected),
-                    "{expected:?} for {:?}",
-                    operation.capability()
-                );
-                assert_eq!(*source_calls.lock().expect("source calls"), 1);
-                let calls = policy_calls.lock().expect("policy calls");
-                if source_ok {
-                    assert_eq!(calls.as_slice(), &[operation.capability()]);
-                } else {
-                    assert!(calls.is_empty());
-                }
-                ports.assert_empty();
-            }
-        }
-    }
-
-    fn enabled_definition() -> AgentDefinitionV1 {
-        AgentDefinitionInput {
-            allowed_tool_ids: vec!["allowed-tool".to_owned(), "denied-tool".to_owned()],
-            memory_enabled: true,
-            memory_max_items: 1,
-            knowledge_enabled: true,
-            knowledge_max_results: 1,
-            sandbox_allow_execution: true,
-            communication_allow_messages: true,
-            max_tool_calls: 2,
-            max_output_bytes: 100,
-            ..definition()
-        }
-        .into_core()
-        .expect("enabled definition")
-    }
-    fn restricted_grant() -> GrantV1 {
-        GrantV1::new(vec!["allowed-tool".to_owned()], false, false, false, false).expect("grant")
-    }
-
-    #[test]
-    #[allow(clippy::too_many_lines)] // One scenario intentionally records the full MCP-to-runtime boundary.
-    fn mcp_runtime_applies_policy_ceiling_to_model_and_denied_requests() {
-        let source_calls = Arc::new(Mutex::new(0));
-        let policy_calls = Arc::new(Mutex::new(vec![]));
-        let ports = PortCalls::default();
-        let responses = vec![
-            ModelResponse {
-                output: "ok".to_owned(),
-                tool_calls: vec![crate::ToolCall {
-                    tool_id: "allowed-tool".to_owned(),
-                    input: String::new(),
-                }],
-                capability_requests: vec![],
-            },
-            ModelResponse {
-                output: "ok".to_owned(),
-                tool_calls: vec![crate::ToolCall {
-                    tool_id: "denied-tool".to_owned(),
-                    input: String::new(),
-                }],
-                capability_requests: vec![],
-            },
-            ModelResponse {
-                output: "ok".to_owned(),
-                tool_calls: vec![],
-                capability_requests: vec![crate::CapabilityRequest::MemoryRecall {
-                    query: String::new(),
-                }],
-            },
-            ModelResponse {
-                output: "ok".to_owned(),
-                tool_calls: vec![],
-                capability_requests: vec![crate::CapabilityRequest::KnowledgeSearch {
-                    query: String::new(),
-                }],
-            },
-            ModelResponse {
-                output: "ok".to_owned(),
-                tool_calls: vec![],
-                capability_requests: vec![crate::CapabilityRequest::SandboxExecute {
-                    action: "action".to_owned(),
-                    arguments: vec![],
-                }],
-            },
-        ];
-        let server = RecordingMcp::new(
-            vec![enabled_definition()],
-            RecordingStore(ports.clone()),
-            RecordingCatalog(ports.clone()),
-            RecordingModel {
-                calls: ports.clone(),
-                responses: Mutex::new(responses),
-            },
-            RecordingTools(ports.clone()),
-            RecordingMemory(ports.clone()),
-            RecordingKnowledge(ports.clone()),
-            RecordingSandbox(ports.clone()),
-            AgentPolicyContextResolver::new(
-                Source {
-                    context: Ok(trusted()),
-                    calls: Arc::clone(&source_calls),
-                },
-                Policy {
-                    allow: true,
-                    tamper: false,
-                    grant: Some(restricted_grant()),
-                    calls: Arc::clone(&policy_calls),
-                },
-            ),
-        )
-        .expect("server");
-        ports.clear();
-        MODEL_SCOPES.with(|scopes| scopes.lock().expect("scopes").clear());
+    fn mcp_host_identity_reaches_effect_and_caller_identity_is_rejected() {
         assert!(
-            server
-                .invoke_json(InvokeInput {
-                    id: "agent".to_owned(),
-                    input: String::new()
-                })
-                .expect("allowed invoke")
-                .contains("allowed-tool")
+            serde_json::from_value::<InvokeInput>(json!({
+                "id": "agent",
+                "input": "request",
+                "principal_id": "caller-principal"
+            }))
+            .is_err()
         );
-        assert!(ports.0.lock().expect("ports").contains(&"tools.invoke"));
-        let before_denied_tool = ports.0.lock().expect("ports").len();
-        assert_eq!(
-            tool_response(server.invoke_json(InvokeInput {
-                id: "agent".to_owned(),
-                input: String::new()
-            })),
-            "{\"error\":\"tool_disallowed\"}"
+        let captured = Arc::new(Mutex::new(None));
+        let mut value = definition();
+        value.memory = MemoryPolicy {
+            enabled: true,
+            max_items: 1,
+        };
+        let provider = StaticProvider::success(
+            StaticFixture::new(
+                "ok",
+                vec![
+                    llm_gateway::ToolCall::new(
+                        llm_gateway::ToolName::new("factory.memory.write").expect("name"),
+                        llm_gateway::JsonObject::new(r#"{"value":"remember"}"#).expect("arguments"),
+                    )
+                    .expect("call"),
+                ],
+                None,
+                FinishReason::ToolCalls,
+                None,
+                IdempotencyDisposition::Unsupported,
+            )
+            .expect("fixture"),
         );
-        assert_eq!(
-            ports.0.lock().expect("ports").len(),
-            before_denied_tool + 2,
-            "only allowed-tool resolution and model invocation precede denied tool"
-        );
-        for expected in ["memory_denied", "knowledge_denied", "sandbox_denied"] {
-            let before = ports.0.lock().expect("ports").len();
-            assert_eq!(
-                tool_response(server.invoke_json(InvokeInput {
-                    id: "agent".to_owned(),
-                    input: String::new()
-                })),
-                format!("{{\"error\":\"{expected}\"}}")
-            );
-            assert_eq!(
-                ports.0.lock().expect("ports").len(),
-                before + 2,
-                "{expected} reaches no corresponding port"
-            );
-        }
-        MODEL_SCOPES.with(|scopes| {
-            for scope in scopes.lock().expect("scopes").iter() {
-                assert_eq!(scope.allowed_tool_ids, vec!["allowed-tool"]);
-                assert!(
-                    !scope.memory.enabled
-                        && !scope.knowledge.enabled
-                        && !scope.sandbox.allow_execution
-                        && !scope.communication.allow_messages
-                );
-            }
-        });
-        assert_eq!(*source_calls.lock().expect("source calls"), 5);
-        assert_eq!(
-            policy_calls.lock().expect("policy calls").as_slice(),
-            &[CapabilityV1::AgentInvoke; 5]
-        );
-    }
-
-    #[test]
-    fn global_v1_definitions_are_visible_to_each_authorized_trusted_tenant() {
-        for tenant in ["tenant-a", "tenant-b"] {
-            let context = TrustedContextV1 {
-                tenant_id: TenantId::new(tenant).expect("tenant"),
-                ..trusted()
-            };
-            let (server, _, _) = service_with_context(context, true, true, false);
-            assert!(
-                server
-                    .get_json(AgentIdInput {
-                        id: "agent".to_owned()
-                    })
-                    .expect("global definition")
-                    .contains("\"id\":\"agent\"")
-            );
-            assert!(
-                server
-                    .list_json()
-                    .expect("global definitions")
-                    .contains("\"id\":\"agent\"")
-            );
-        }
+        let server = AgentDefinitionMcp::new(
+            vec![value],
+            InMemoryDefinitionStore::default(),
+            StaticReferenceCatalog::new(["static.model".to_owned()], [], [], []),
+            provider,
+            FixedToolRegistry::default(),
+            CapturingMemory(Arc::clone(&captured)),
+            StaticKnowledgeStore::default(),
+            DenySandbox,
+            AgentPolicyContextResolver::new(ContextSource, MemoryPolicyResolver),
+            Box::new(ControlSource(Arc::new(Mutex::new(0)))),
+        )
+        .expect("service");
+        poll_ready(server.invoke_json(InvokeInput {
+            id: "agent".to_owned(),
+            input: String::new(),
+        }))
+        .expect("invoke");
+        let context = captured.lock().expect("context").clone().expect("captured");
+        assert_eq!(context.tenant_id().as_str(), "host-tenant");
+        assert_eq!(context.principal_id().as_str(), "host-principal");
+        assert_eq!(context.request_id().as_str(), "host-request");
+        assert_eq!(context.correlation_id().as_str(), "host-correlation");
     }
 }

@@ -37,7 +37,7 @@ BINARY_DIR = "projects"
 # structural placement rule — a scaffolded package must be a status-only core
 # under its canonical path — not a roadmap: the capability taxonomy lives in
 # GitHub, not here.
-STATUS_ONLY_FAMILIES = frozenset({"model-gateway", "sandbox"})
+STATUS_ONLY_FAMILIES = frozenset({"sandbox"})
 
 # Defensive ceiling on any single file this validator reads.
 MAX_READ_BYTES = 1 << 20
@@ -72,6 +72,7 @@ ADAPTER_MODULES = {
     "schemars": frozenset({"mcp", "settings"}),
     "anyhow": frozenset({"mcp"}),
     "cap_std": frozenset({"fs"}),
+    "genai": frozenset({"genai"}),
     "agentic_memory": frozenset({"agentic"}),
     "redb": frozenset({"redb"}),
     "opentelemetry": frozenset({"opentelemetry"}),
@@ -100,6 +101,8 @@ ADAPTER_MODULE_NAMES = frozenset(
         "fs",
         "agentic",
         "local",
+        "static",
+        "genai",
         "redb",
         "settings",
         "opentelemetry",
@@ -406,11 +409,12 @@ def aliases_crate_root(text: str) -> bool:
 def core_references_adapter(text: str, adapter_module: str) -> bool:
     """Detects direct and grouped crate-root paths into an adapter module."""
     escaped = re.escape(adapter_module)
-    if re.search(rf"\bcrate\s*::\s*{escaped}\b", text):
+    raw_prefix = r"r#" if adapter_module == "static" else ""
+    if re.search(rf"\bcrate\s*::\s*{raw_prefix}{escaped}\b", text):
         return True
     return any(
         re.match(r"^\s*crate\s*::\s*\{", tree)
-        and re.search(rf"\b{escaped}\b", tree)
+        and re.search(rf"\b{raw_prefix}{escaped}\b", tree)
         for tree in rust_use_trees(text)
     )
 
@@ -525,8 +529,13 @@ def validate_conditional_derives(package_dir: Path) -> None:
                 if feature.replace("-", "_") in adapter_modules
             ]
             following_item = text[attribute_end:]
+            module_identifier = (
+                "r#static" if len(gated) == 1 and gated[0][1] == "static"
+                else gated[0][1] if len(gated) == 1
+                else ""
+            )
             if len(gated) != 1 or not re.match(
-                rf"\s*(?:pub\s+)?mod\s+{re.escape(gated[0][1])}\s*;",
+                rf"\s*(?:pub\s+)?mod\s+{re.escape(module_identifier)}\s*;",
                 following_item,
             ):
                 raise ValueError(

@@ -57,6 +57,87 @@ impl AgentId {
     }
 }
 
+macro_rules! invocation_id {
+    ($name:ident) => {
+        #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+        pub struct $name(String);
+        impl $name {
+            /// Creates an invocation ID matching `[a-z0-9][a-z0-9_-]{0,127}`.
+            pub fn new(value: impl Into<String>) -> Result<Self, DefinitionError> {
+                let value = value.into();
+                let mut bytes = value.bytes();
+                let valid = value.len() <= 128
+                    && matches!(bytes.next(), Some(byte) if byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                    && bytes.all(|byte| {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(byte, b'_' | b'-')
+                    });
+                valid
+                    .then_some(Self(value))
+                    .ok_or(DefinitionError::InvalidRequest)
+            }
+
+            /// Returns the validated identifier.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+    };
+}
+
+invocation_id!(TenantId);
+invocation_id!(PrincipalId);
+invocation_id!(RequestId);
+invocation_id!(CorrelationId);
+
+/// Trusted, request-scoped identity propagated only to Agent-owned effect ports.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_field_names)] // Contract fields intentionally retain their distinct ID names.
+pub struct InvocationContextV1 {
+    tenant_id: TenantId,
+    principal_id: PrincipalId,
+    request_id: RequestId,
+    correlation_id: CorrelationId,
+}
+impl InvocationContextV1 {
+    #[must_use]
+    pub const fn new(
+        tenant_id: TenantId,
+        principal_id: PrincipalId,
+        request_id: RequestId,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        Self {
+            tenant_id,
+            principal_id,
+            request_id,
+            correlation_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    #[must_use]
+    pub const fn principal_id(&self) -> &PrincipalId {
+        &self.principal_id
+    }
+
+    #[must_use]
+    pub const fn request_id(&self) -> &RequestId {
+        &self.request_id
+    }
+
+    #[must_use]
+    pub const fn correlation_id(&self) -> &CorrelationId {
+        &self.correlation_id
+    }
+}
+
 /// Typed model selection policy without provider configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelPolicy {
@@ -90,8 +171,6 @@ pub const MAX_TOOL_CALLS: u32 = 64;
 pub const MAX_OUTPUT_BYTES: u32 = 65_536;
 /// Rust Factory hard ceiling for an invocation or provider input string.
 pub const MAX_INPUT_BYTES: usize = 16_384;
-/// Rust Factory hard ceiling for provider capability requests per invocation.
-pub const MAX_CAPABILITY_REQUESTS: usize = 64;
 /// Rust Factory hard ceiling for a memory-write value.
 pub const MAX_MEMORY_WRITE_VALUE_BYTES: usize = 16_384;
 /// Rust Factory hard ceiling for a tool request input.
@@ -202,6 +281,7 @@ impl From<&AgentDefinitionV1> for AgentSummary {
 /// Stable public error categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PublicErrorCode {
+    InvalidRequest,
     InvalidDefinition,
     InvalidReference,
     ReferenceUnavailable,
@@ -214,10 +294,13 @@ pub enum PublicErrorCode {
     SandboxDenied,
     AdapterFailure,
     LimitExceeded,
+    Cancelled,
+    DeadlineExceeded,
 }
 /// Typed core errors without adapter details.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DefinitionError {
+    InvalidRequest,
     InvalidId,
     InvalidDefinition,
     InvalidReference,
@@ -231,11 +314,14 @@ pub enum DefinitionError {
     SandboxDenied,
     AdapterFailure,
     LimitExceeded,
+    Cancelled,
+    DeadlineExceeded,
 }
 impl DefinitionError {
     #[must_use]
     pub const fn public_code(&self) -> PublicErrorCode {
         match self {
+            Self::InvalidRequest => PublicErrorCode::InvalidRequest,
             Self::InvalidId | Self::InvalidDefinition => PublicErrorCode::InvalidDefinition,
             Self::InvalidReference => PublicErrorCode::InvalidReference,
             Self::ReferenceUnavailable => PublicErrorCode::ReferenceUnavailable,
@@ -248,6 +334,8 @@ impl DefinitionError {
             Self::SandboxDenied => PublicErrorCode::SandboxDenied,
             Self::AdapterFailure => PublicErrorCode::AdapterFailure,
             Self::LimitExceeded => PublicErrorCode::LimitExceeded,
+            Self::Cancelled => PublicErrorCode::Cancelled,
+            Self::DeadlineExceeded => PublicErrorCode::DeadlineExceeded,
         }
     }
 }
@@ -595,56 +683,47 @@ impl ResolvedCapabilityScope {
     }
 }
 
-/// Provider-neutral model request with the complete resolved policy scope.
+/// Borrowed asynchronous result of one Agent invocation.
+pub type InvocationFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<InvocationResult, DefinitionError>> + Send + 'a>,
+>;
+
+/// Agent-owned safe projection of a normalized model finish reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InvocationModelFinishReason {
+    Stop,
+    Length,
+    ToolCalls,
+    ContentFilter,
+    Other,
+}
+
+/// Agent-owned safe projection of bounded token usage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvocationModelTokenUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub total_tokens: u32,
+}
+
+/// Agent-owned safe projection of provider idempotency support.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InvocationModelIdempotency {
+    Unsupported,
+    Accepted,
+}
+
+/// Safe model evidence retained by Agent without provider payloads or errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ModelRequest {
-    pub agent_id: AgentId,
-    pub model_reference: String,
-    pub instructions: String,
-    pub input: String,
-    pub capability_scope: ResolvedCapabilityScope,
+pub struct InvocationModelEvidence {
+    pub provider_id: String,
+    pub model_id: String,
+    pub provider_request_id: Option<String>,
+    pub finish_reason: InvocationModelFinishReason,
+    pub token_usage: Option<InvocationModelTokenUsage>,
+    pub idempotency: InvocationModelIdempotency,
 }
-/// A tool call requested by a provider. Input is opaque data for the named typed tool.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ToolCall {
-    pub tool_id: String,
-    pub input: String,
-}
-/// An adapter operation requested by a provider under the resolved capability scope.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CapabilityRequest {
-    MemoryRecall {
-        query: String,
-    },
-    MemoryWrite {
-        value: String,
-    },
-    KnowledgeSearch {
-        query: String,
-    },
-    SandboxExecute {
-        action: String,
-        arguments: Vec<String>,
-    },
-}
-/// Normalized provider result.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ModelResponse {
-    pub output: String,
-    pub tool_calls: Vec<ToolCall>,
-    pub capability_requests: Vec<CapabilityRequest>,
-}
-/// Model-provider port.
-///
-/// Provisional pre-extraction port. The Model gateway family owns this contract
-/// in the portfolio registry, but the port stays here until extraction is
-/// separately gated: [`ModelRequest`] carries agent-specific identity and
-/// resolved policy scope, and [`ModelResponse`] carries [`CapabilityRequest`],
-/// which couples the memory, knowledge, and sandbox families to this type.
-/// Moving it to `model-gateway-core` unchanged would freeze that coupling.
-pub trait ModelProvider: Send + Sync {
-    fn invoke(&self, request: ModelRequest) -> Result<ModelResponse, DefinitionError>;
-}
+
 /// Registered typed tool metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolDescriptor {
@@ -653,6 +732,7 @@ pub struct ToolDescriptor {
 /// A policy-scoped request to a named tool.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolRequest {
+    pub context: InvocationContextV1,
     pub agent_id: AgentId,
     pub capability_scope: ResolvedCapabilityScope,
     pub input: String,
@@ -674,6 +754,7 @@ pub trait ToolRegistry: Send + Sync {
 /// Scoped memory recall or write request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryRequest {
+    pub context: InvocationContextV1,
     pub agent_id: AgentId,
     pub capability_scope: ResolvedCapabilityScope,
     pub query: String,
@@ -692,6 +773,7 @@ pub trait MemoryStore: Send + Sync {
 /// Scoped knowledge-search request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KnowledgeRequest {
+    pub context: InvocationContextV1,
     pub agent_id: AgentId,
     pub capability_scope: ResolvedCapabilityScope,
     pub query: String,
@@ -708,6 +790,7 @@ pub trait KnowledgeStore: Send + Sync {
 /// A typed sandbox action identifier and arguments, never source code or a shell command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SandboxRequest {
+    pub context: InvocationContextV1,
     pub agent_id: AgentId,
     pub capability_scope: ResolvedCapabilityScope,
     pub action: String,
@@ -724,22 +807,6 @@ pub trait Sandbox: Send + Sync {
     fn execute(&self, request: SandboxRequest) -> Result<String, DefinitionError>;
 }
 
-/// Static deterministic model adapter for local tests and demos.
-#[derive(Clone, Debug)]
-pub struct StaticModelProvider {
-    response: ModelResponse,
-}
-impl StaticModelProvider {
-    #[must_use]
-    pub fn new(response: ModelResponse) -> Self {
-        Self { response }
-    }
-}
-impl ModelProvider for StaticModelProvider {
-    fn invoke(&self, _: ModelRequest) -> Result<ModelResponse, DefinitionError> {
-        Ok(self.response.clone())
-    }
-}
 /// Fixed deterministic tool registry.
 #[derive(Default)]
 pub struct FixedToolRegistry {
@@ -770,7 +837,7 @@ impl ToolRegistry for FixedToolRegistry {
 /// Deterministic in-memory memory adapter.
 #[derive(Default)]
 pub struct InMemoryMemoryStore {
-    values: Mutex<Vec<String>>,
+    values: Mutex<BTreeMap<TenantId, Vec<String>>>,
 }
 impl MemoryStore for InMemoryMemoryStore {
     fn recall(&self, request: MemoryRequest) -> Result<Vec<String>, DefinitionError> {
@@ -778,16 +845,20 @@ impl MemoryStore for InMemoryMemoryStore {
             .values
             .lock()
             .map_err(|_| DefinitionError::AdapterFailure)?
-            .iter()
+            .get(request.context.tenant_id())
+            .into_iter()
+            .flatten()
             .filter(|value| value.contains(&request.query))
             .take(request.limit as usize)
             .cloned()
             .collect())
     }
-    fn write(&self, _: MemoryRequest, value: String) -> Result<(), DefinitionError> {
+    fn write(&self, request: MemoryRequest, value: String) -> Result<(), DefinitionError> {
         self.values
             .lock()
             .map_err(|_| DefinitionError::AdapterFailure)?
+            .entry(request.context.tenant_id().clone())
+            .or_default()
             .push(value);
         Ok(())
     }
@@ -839,6 +910,42 @@ pub struct InvocationResult {
     pub capability_scope_digest: String,
     pub events: Vec<InvocationEvent>,
     pub output: String,
+    pub model_evidence: InvocationModelEvidence,
+}
+
+const MEMORY_RECALL_TOOL: &str = "factory.memory.recall";
+const MEMORY_WRITE_TOOL: &str = "factory.memory.write";
+const KNOWLEDGE_SEARCH_TOOL: &str = "factory.knowledge.search";
+const SANDBOX_EXECUTE_TOOL: &str = "factory.sandbox.execute";
+const RESERVED_TOOL_NAMES: [&str; 4] = [
+    MEMORY_RECALL_TOOL,
+    MEMORY_WRITE_TOOL,
+    KNOWLEDGE_SEARCH_TOOL,
+    SANDBOX_EXECUTE_TOOL,
+];
+const STRING_ARGUMENT_SCHEMA: &str = r#"{"additionalProperties":false,"properties":{"input":{"type":"string"}},"required":["input"],"type":"object"}"#;
+const QUERY_SCHEMA: &str = r#"{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"}"#;
+const VALUE_SCHEMA: &str = r#"{"additionalProperties":false,"properties":{"value":{"type":"string"}},"required":["value"],"type":"object"}"#;
+const SANDBOX_SCHEMA: &str = r#"{"additionalProperties":false,"properties":{"action":{"type":"string"},"arguments":{"items":{"type":"string"},"type":"array"}},"required":["action","arguments"],"type":"object"}"#;
+
+enum PlannedEffect {
+    Tool {
+        tool: ToolDescriptor,
+        input: String,
+    },
+    MemoryRecall {
+        query: String,
+    },
+    MemoryWrite {
+        value: String,
+    },
+    KnowledgeSearch {
+        query: String,
+    },
+    SandboxExecute {
+        action: String,
+        arguments: Vec<String>,
+    },
 }
 
 /// Bounded local runtime with all capabilities injected through core ports.
@@ -854,7 +961,7 @@ impl<
     'a,
     S: DefinitionStore,
     C: ReferenceCatalog,
-    M: ModelProvider,
+    M: llm_gateway::LlmProvider,
     T: ToolRegistry,
     MM: MemoryStore,
     K: KnowledgeStore,
@@ -879,75 +986,184 @@ impl<
             sandbox,
         }
     }
-    /// Invokes using the definition's complete capability set for compatibility.
-    pub fn invoke(&self, id: &AgentId, input: String) -> Result<InvocationResult, DefinitionError> {
-        let definition = self.registry.get(id)?;
-        let ceiling = EffectiveCapabilityCeilingV1::full_definition(&definition);
-        self.invoke_definition(id, input, &definition, &ceiling)
+
+    /// Invokes using the definition's complete capability set.
+    #[must_use]
+    pub fn invoke<'b>(
+        &'b self,
+        context: InvocationContextV1,
+        id: &'b AgentId,
+        input: String,
+        control: llm_gateway::InvocationControl<'b>,
+    ) -> InvocationFuture<'b> {
+        Box::pin(async move {
+            let definition = self.registry.get(id)?;
+            let ceiling = EffectiveCapabilityCeilingV1::full_definition(&definition);
+            self.invoke_definition(context, id, input, definition, ceiling, control)
+                .await
+        })
     }
 
     /// Invokes with an external ceiling that can only reduce the definition's scope.
-    pub fn invoke_with_ceiling(
-        &self,
-        id: &AgentId,
+    #[must_use]
+    pub fn invoke_with_ceiling<'b>(
+        &'b self,
+        context: InvocationContextV1,
+        id: &'b AgentId,
         input: String,
-        ceiling: &EffectiveCapabilityCeilingV1,
-    ) -> Result<InvocationResult, DefinitionError> {
-        validate_effective_capability_ceiling(ceiling)?;
-        let definition = self.registry.get(id)?;
-        self.invoke_definition(id, input, &definition, ceiling)
+        ceiling: &'b EffectiveCapabilityCeilingV1,
+        control: llm_gateway::InvocationControl<'b>,
+    ) -> InvocationFuture<'b> {
+        Box::pin(async move {
+            validate_effective_capability_ceiling(ceiling)?;
+            let definition = self.registry.get(id)?;
+            self.invoke_definition(context, id, input, definition, ceiling.clone(), control)
+                .await
+        })
     }
 
-    #[allow(clippy::too_many_lines)] // Coordinates each typed, policy-gated adapter action for one invocation.
-    fn invoke_definition(
+    #[allow(clippy::too_many_lines)]
+    async fn invoke_definition(
         &self,
+        context: InvocationContextV1,
         id: &AgentId,
         input: String,
-        definition: &AgentDefinitionV1,
-        ceiling: &EffectiveCapabilityCeilingV1,
+        definition: AgentDefinitionV1,
+        ceiling: EffectiveCapabilityCeilingV1,
+        control: llm_gateway::InvocationControl<'_>,
     ) -> Result<InvocationResult, DefinitionError> {
         if input.len() > MAX_INPUT_BYTES {
             return Err(DefinitionError::LimitExceeded);
         }
-        let effective_ceiling = ceiling.intersect(definition)?;
+        let effective_ceiling = ceiling.intersect(&definition)?;
         let resolved = effective_ceiling
             .allowed_tool_ids
             .iter()
             .map(|tool_id| self.tools.resolve(tool_id))
             .collect::<Result<Vec<_>, _>>()?;
         let scope =
-            ResolvedCapabilityScope::from_definition(definition, &resolved, &effective_ceiling);
-        let response = self.model.invoke(ModelRequest {
-            agent_id: id.clone(),
-            model_reference: definition.model.reference.clone(),
-            instructions: definition.instructions.clone(),
-            input,
-            capability_scope: scope.clone(),
-        })?;
-        if response.tool_calls.len() > definition.limits.max_tool_calls as usize
-            || response.tool_calls.len() > MAX_TOOL_CALLS as usize
-            || response.capability_requests.len() > MAX_CAPABILITY_REQUESTS
+            ResolvedCapabilityScope::from_definition(&definition, &resolved, &effective_ceiling);
+        let (provider_id, model_id) = parse_model_reference(&definition.model.reference)?;
+        let (tool_definitions, ordinary_tools) = gateway_tools(&resolved, &scope)?;
+        let request = llm_gateway::GenerateRequest::new(
+            provider_id,
+            model_id,
+            llm_gateway::Prompt::new(Some(definition.instructions.clone()), input)
+                .map_err(map_gateway_error)?,
+            tool_definitions,
+            llm_gateway::GenerationLimits::new(definition.limits.max_output_bytes)
+                .map_err(map_gateway_error)?,
+        )
+        .map_err(map_gateway_error)?;
+        let response = self
+            .model
+            .generate(&request, control)
+            .await
+            .map_err(map_gateway_error)?;
+        control.preflight().map_err(map_gateway_error)?;
+        if response.tool_calls().len() > definition.limits.max_tool_calls as usize
+            || response.tool_calls().len() > MAX_TOOL_CALLS as usize
         {
             return Err(DefinitionError::LimitExceeded);
         }
         let mut output_bytes =
-            checked_output_bytes(&response.output, 0, definition.limits.max_output_bytes)?;
-        let allowed = scope
-            .allowed_tool_ids
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let mut events = vec![InvocationEvent::ModelInvoked];
-        for request in response.capability_requests {
-            match request {
-                CapabilityRequest::MemoryRecall { query } => {
-                    if query.len() > MAX_INPUT_BYTES {
-                        return Err(DefinitionError::LimitExceeded);
-                    }
+            checked_output_bytes(response.text(), 0, definition.limits.max_output_bytes)?;
+        let mut plan = Vec::with_capacity(response.tool_calls().len());
+        for call in response.tool_calls() {
+            let name = call.name().as_str();
+            if let Some(tool) = ordinary_tools.get(name) {
+                if !scope
+                    .allowed_tool_ids
+                    .iter()
+                    .any(|allowed| allowed == &tool.id)
+                {
+                    return Err(DefinitionError::ToolDisallowed(tool.id.clone()));
+                }
+                let input = strict_string_argument(call.arguments(), "input")?;
+                if input.len() > MAX_TOOL_REQUEST_INPUT_BYTES {
+                    return Err(DefinitionError::LimitExceeded);
+                }
+                plan.push(PlannedEffect::Tool {
+                    tool: tool.clone(),
+                    input,
+                });
+                continue;
+            }
+            match name {
+                MEMORY_RECALL_TOOL => {
                     if !scope.memory.enabled {
                         return Err(DefinitionError::MemoryDenied);
                     }
+                    let query = strict_string_argument(call.arguments(), "query")?;
+                    if query.len() > MAX_INPUT_BYTES {
+                        return Err(DefinitionError::LimitExceeded);
+                    }
+                    plan.push(PlannedEffect::MemoryRecall { query });
+                }
+                MEMORY_WRITE_TOOL => {
+                    if !scope.memory.enabled {
+                        return Err(DefinitionError::MemoryDenied);
+                    }
+                    let value = strict_string_argument(call.arguments(), "value")?;
+                    if value.len() > MAX_MEMORY_WRITE_VALUE_BYTES {
+                        return Err(DefinitionError::LimitExceeded);
+                    }
+                    plan.push(PlannedEffect::MemoryWrite { value });
+                }
+                KNOWLEDGE_SEARCH_TOOL => {
+                    if !scope.knowledge.enabled {
+                        return Err(DefinitionError::KnowledgeDenied);
+                    }
+                    let query = strict_string_argument(call.arguments(), "query")?;
+                    if query.len() > MAX_INPUT_BYTES {
+                        return Err(DefinitionError::LimitExceeded);
+                    }
+                    plan.push(PlannedEffect::KnowledgeSearch { query });
+                }
+                SANDBOX_EXECUTE_TOOL => {
+                    if !scope.sandbox.allow_execution {
+                        return Err(DefinitionError::SandboxDenied);
+                    }
+                    let (action, arguments) = strict_sandbox_arguments(call.arguments())?;
+                    if action.len() > MAX_INPUT_BYTES
+                        || arguments.len() > MAX_SANDBOX_ARGUMENTS
+                        || arguments
+                            .iter()
+                            .any(|value| value.len() > MAX_SANDBOX_ARGUMENT_BYTES)
+                    {
+                        return Err(DefinitionError::LimitExceeded);
+                    }
+                    plan.push(PlannedEffect::SandboxExecute { action, arguments });
+                }
+                _ => return Err(DefinitionError::ToolDisallowed(name.to_owned())),
+            }
+        }
+
+        let mut events = vec![InvocationEvent::ModelInvoked];
+        for effect in plan {
+            match effect {
+                PlannedEffect::Tool { tool, input } => {
+                    control.preflight().map_err(map_gateway_error)?;
+                    let output = self.tools.invoke(
+                        &tool,
+                        ToolRequest {
+                            context: context.clone(),
+                            agent_id: id.clone(),
+                            capability_scope: scope.clone(),
+                            input,
+                        },
+                    )?;
+                    output_bytes =
+                        checked_output_bytes(&output, output_bytes, scope.limits.max_output_bytes)?;
+                    events.push(InvocationEvent::ToolCompleted {
+                        tool_id: tool.id,
+                        output,
+                    });
+                }
+                PlannedEffect::MemoryRecall { query } => {
+                    control.preflight().map_err(map_gateway_error)?;
                     let values = self.memory.recall(MemoryRequest {
+                        context: context.clone(),
                         agent_id: id.clone(),
                         capability_scope: scope.clone(),
                         query,
@@ -960,15 +1176,11 @@ impl<
                     )?;
                     events.push(InvocationEvent::MemoryRecalled { values });
                 }
-                CapabilityRequest::MemoryWrite { value } => {
-                    if value.len() > MAX_MEMORY_WRITE_VALUE_BYTES {
-                        return Err(DefinitionError::LimitExceeded);
-                    }
-                    if !scope.memory.enabled {
-                        return Err(DefinitionError::MemoryDenied);
-                    }
+                PlannedEffect::MemoryWrite { value } => {
+                    control.preflight().map_err(map_gateway_error)?;
                     self.memory.write(
                         MemoryRequest {
+                            context: context.clone(),
                             agent_id: id.clone(),
                             capability_scope: scope.clone(),
                             query: String::new(),
@@ -978,14 +1190,10 @@ impl<
                     )?;
                     events.push(InvocationEvent::MemoryWritten);
                 }
-                CapabilityRequest::KnowledgeSearch { query } => {
-                    if query.len() > MAX_INPUT_BYTES {
-                        return Err(DefinitionError::LimitExceeded);
-                    }
-                    if !scope.knowledge.enabled {
-                        return Err(DefinitionError::KnowledgeDenied);
-                    }
+                PlannedEffect::KnowledgeSearch { query } => {
+                    control.preflight().map_err(map_gateway_error)?;
                     let results = self.knowledge.search(KnowledgeRequest {
+                        context: context.clone(),
                         agent_id: id.clone(),
                         capability_scope: scope.clone(),
                         query,
@@ -998,19 +1206,10 @@ impl<
                     )?;
                     events.push(InvocationEvent::KnowledgeSearched { results });
                 }
-                CapabilityRequest::SandboxExecute { action, arguments } => {
-                    if action.len() > MAX_INPUT_BYTES
-                        || arguments.len() > MAX_SANDBOX_ARGUMENTS
-                        || arguments
-                            .iter()
-                            .any(|value| value.len() > MAX_SANDBOX_ARGUMENT_BYTES)
-                    {
-                        return Err(DefinitionError::LimitExceeded);
-                    }
-                    if !scope.sandbox.allow_execution {
-                        return Err(DefinitionError::SandboxDenied);
-                    }
+                PlannedEffect::SandboxExecute { action, arguments } => {
+                    control.preflight().map_err(map_gateway_error)?;
                     let output = self.sandbox.execute(SandboxRequest {
+                        context: context.clone(),
                         agent_id: id.clone(),
                         capability_scope: scope.clone(),
                         action,
@@ -1022,35 +1221,184 @@ impl<
                 }
             }
         }
-        for call in response.tool_calls {
-            if call.input.len() > MAX_TOOL_REQUEST_INPUT_BYTES {
-                return Err(DefinitionError::LimitExceeded);
-            }
-            if !allowed.contains(&call.tool_id) {
-                return Err(DefinitionError::ToolDisallowed(call.tool_id));
-            }
-            let tool = self.tools.resolve(&call.tool_id)?;
-            let output = self.tools.invoke(
-                &tool,
-                ToolRequest {
-                    agent_id: id.clone(),
-                    capability_scope: scope.clone(),
-                    input: call.input,
-                },
-            )?;
-            output_bytes =
-                checked_output_bytes(&output, output_bytes, scope.limits.max_output_bytes)?;
-            events.push(InvocationEvent::ToolCompleted {
-                tool_id: tool.id,
-                output,
-            });
-        }
         let _ = output_bytes;
         Ok(InvocationResult {
             capability_scope_digest: scope.digest,
             events,
-            output: response.output,
+            output: response.text().to_owned(),
+            model_evidence: project_model_evidence(response.evidence()),
         })
+    }
+}
+
+/// V1 model references use exactly `provider.model`, with one nonempty segment
+/// on each side of the single dot. This keeps provider selection explicit and
+/// rejects malformed references before the provider future is created.
+fn parse_model_reference(
+    reference: &str,
+) -> Result<(llm_gateway::ProviderId, llm_gateway::ModelId), DefinitionError> {
+    let (provider, model) = reference
+        .split_once('.')
+        .filter(|(provider, model)| {
+            !provider.is_empty() && !model.is_empty() && !model.contains('.')
+        })
+        .ok_or(DefinitionError::InvalidReference)?;
+    Ok((
+        llm_gateway::ProviderId::new(provider).map_err(map_gateway_error)?,
+        llm_gateway::ModelId::new(model).map_err(map_gateway_error)?,
+    ))
+}
+
+fn gateway_tools(
+    resolved: &[ToolDescriptor],
+    scope: &ResolvedCapabilityScope,
+) -> Result<
+    (
+        Vec<llm_gateway::ToolDefinition>,
+        BTreeMap<String, ToolDescriptor>,
+    ),
+    DefinitionError,
+> {
+    let mut definitions = Vec::with_capacity(resolved.len() + RESERVED_TOOL_NAMES.len());
+    let mut ordinary = BTreeMap::new();
+    for tool in resolved {
+        if RESERVED_TOOL_NAMES.contains(&tool.id.as_str()) {
+            return Err(DefinitionError::InvalidReference);
+        }
+        let name = llm_gateway::ToolName::new(tool.id.clone()).map_err(map_gateway_error)?;
+        if ordinary
+            .insert(name.as_str().to_owned(), tool.clone())
+            .is_some()
+        {
+            return Err(DefinitionError::InvalidDefinition);
+        }
+        definitions.push(gateway_tool(name, "Agent tool", STRING_ARGUMENT_SCHEMA)?);
+    }
+    if scope.memory.enabled {
+        definitions.push(gateway_tool_name(MEMORY_RECALL_TOOL, QUERY_SCHEMA)?);
+        definitions.push(gateway_tool_name(MEMORY_WRITE_TOOL, VALUE_SCHEMA)?);
+    }
+    if scope.knowledge.enabled {
+        definitions.push(gateway_tool_name(KNOWLEDGE_SEARCH_TOOL, QUERY_SCHEMA)?);
+    }
+    if scope.sandbox.allow_execution {
+        definitions.push(gateway_tool_name(SANDBOX_EXECUTE_TOOL, SANDBOX_SCHEMA)?);
+    }
+    Ok((definitions, ordinary))
+}
+
+fn gateway_tool_name(
+    name: &str,
+    schema: &str,
+) -> Result<llm_gateway::ToolDefinition, DefinitionError> {
+    gateway_tool(
+        llm_gateway::ToolName::new(name).map_err(map_gateway_error)?,
+        "Agent reserved capability",
+        schema,
+    )
+}
+
+fn gateway_tool(
+    name: llm_gateway::ToolName,
+    description: &str,
+    schema: &str,
+) -> Result<llm_gateway::ToolDefinition, DefinitionError> {
+    llm_gateway::ToolDefinition::new(
+        name,
+        description,
+        llm_gateway::JsonObject::new(schema).map_err(map_gateway_error)?,
+    )
+    .map_err(map_gateway_error)
+}
+
+fn strict_string_argument(
+    arguments: &llm_gateway::JsonObject,
+    field: &str,
+) -> Result<String, DefinitionError> {
+    let value: serde_json::Value =
+        serde_json::from_str(arguments.canonical()).map_err(|_| DefinitionError::AdapterFailure)?;
+    let object = value.as_object().ok_or(DefinitionError::AdapterFailure)?;
+    if object.len() != 1 {
+        return Err(DefinitionError::InvalidDefinition);
+    }
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or(DefinitionError::InvalidDefinition)
+}
+
+fn strict_sandbox_arguments(
+    arguments: &llm_gateway::JsonObject,
+) -> Result<(String, Vec<String>), DefinitionError> {
+    let value: serde_json::Value =
+        serde_json::from_str(arguments.canonical()).map_err(|_| DefinitionError::AdapterFailure)?;
+    let object = value.as_object().ok_or(DefinitionError::AdapterFailure)?;
+    if object.len() != 2 {
+        return Err(DefinitionError::InvalidDefinition);
+    }
+    let action = object
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(DefinitionError::InvalidDefinition)?
+        .to_owned();
+    let arguments = object
+        .get("arguments")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(DefinitionError::InvalidDefinition)?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or(DefinitionError::InvalidDefinition)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((action, arguments))
+}
+
+fn map_gateway_error(error: llm_gateway::LlmError) -> DefinitionError {
+    match error {
+        llm_gateway::LlmError::LimitExceeded => DefinitionError::LimitExceeded,
+        llm_gateway::LlmError::Cancelled => DefinitionError::Cancelled,
+        llm_gateway::LlmError::DeadlineExceeded => DefinitionError::DeadlineExceeded,
+        llm_gateway::LlmError::InvalidRequest => DefinitionError::InvalidDefinition,
+        llm_gateway::LlmError::Unsupported
+        | llm_gateway::LlmError::Authentication
+        | llm_gateway::LlmError::RateLimited
+        | llm_gateway::LlmError::Unavailable
+        | llm_gateway::LlmError::ProviderRejected
+        | llm_gateway::LlmError::ProtocolViolation => DefinitionError::AdapterFailure,
+    }
+}
+
+fn project_model_evidence(evidence: &llm_gateway::GenerationEvidence) -> InvocationModelEvidence {
+    InvocationModelEvidence {
+        provider_id: evidence.provider_id().as_str().to_owned(),
+        model_id: evidence.model_id().as_str().to_owned(),
+        provider_request_id: evidence
+            .provider_request_id()
+            .map(|id| id.as_str().to_owned()),
+        finish_reason: match evidence.finish_reason() {
+            llm_gateway::FinishReason::Stop => InvocationModelFinishReason::Stop,
+            llm_gateway::FinishReason::Length => InvocationModelFinishReason::Length,
+            llm_gateway::FinishReason::ToolCalls => InvocationModelFinishReason::ToolCalls,
+            llm_gateway::FinishReason::ContentFilter => InvocationModelFinishReason::ContentFilter,
+            llm_gateway::FinishReason::Other => InvocationModelFinishReason::Other,
+        },
+        token_usage: evidence
+            .token_usage()
+            .map(|usage| InvocationModelTokenUsage {
+                input_tokens: usage.input_tokens(),
+                output_tokens: usage.output_tokens(),
+                total_tokens: usage.total_tokens(),
+            }),
+        idempotency: match evidence.idempotency() {
+            llm_gateway::IdempotencyDisposition::Unsupported => {
+                InvocationModelIdempotency::Unsupported
+            }
+            llm_gateway::IdempotencyDisposition::Accepted => InvocationModelIdempotency::Accepted,
+        },
     }
 }
 
@@ -1159,928 +1507,4 @@ fn digest_scope(scope: &ResolvedCapabilityScope) -> String {
         &number(scope.limits.max_output_bytes),
     );
     format!("{:x}", hasher.finalize())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-    use std::sync::Arc;
-    fn catalog() -> StaticReferenceCatalog {
-        StaticReferenceCatalog::new(
-            ["static-model".to_owned()],
-            ["rust".to_owned()],
-            ["factory".to_owned()],
-            ["allowed".to_owned()],
-        )
-    }
-    fn definition(id: &str, tools: Vec<&str>) -> AgentDefinitionV1 {
-        AgentDefinitionV1 {
-            version: DefinitionVersion::V1,
-            id: AgentId::new(id).expect("id"),
-            name: "Agent".to_owned(),
-            description: "A deterministic agent".to_owned(),
-            model: ModelPolicy {
-                reference: "static-model".to_owned(),
-            },
-            instructions: "Respond safely.".to_owned(),
-            skills: vec!["rust".to_owned()],
-            steering: vec!["factory".to_owned()],
-            allowed_tool_ids: tools.into_iter().map(str::to_owned).collect(),
-            memory: MemoryPolicy {
-                enabled: false,
-                max_items: 0,
-            },
-            knowledge: KnowledgePolicy {
-                enabled: false,
-                max_results: 0,
-            },
-            sandbox: SandboxPolicy {
-                allow_execution: false,
-            },
-            communication: CommunicationPolicy {
-                allow_messages: false,
-            },
-            limits: ExecutionLimits {
-                max_tool_calls: 2,
-                max_output_bytes: 100,
-            },
-        }
-    }
-    fn runtime<'a>(
-        definition: AgentDefinitionV1,
-        response: ModelResponse,
-        tools: &'a FixedToolRegistry,
-        memory: &'a InMemoryMemoryStore,
-        knowledge: &'a StaticKnowledgeStore,
-        sandbox: &'a DenySandbox,
-    ) -> LocalAgentRuntime<
-        'a,
-        InMemoryDefinitionStore,
-        StaticReferenceCatalog,
-        StaticModelProvider,
-        FixedToolRegistry,
-        InMemoryMemoryStore,
-        StaticKnowledgeStore,
-        DenySandbox,
-    > {
-        let registry = Box::leak(Box::new(
-            AgentRegistry::new(
-                vec![definition],
-                InMemoryDefinitionStore::default(),
-                catalog(),
-            )
-            .expect("registry"),
-        ));
-        let model = Box::leak(Box::new(StaticModelProvider::new(response)));
-        LocalAgentRuntime::new(registry, model, tools, memory, knowledge, sandbox)
-    }
-    struct RecordingModel {
-        request: Mutex<Option<ModelRequest>>,
-        response: ModelResponse,
-    }
-    impl ModelProvider for RecordingModel {
-        fn invoke(&self, request: ModelRequest) -> Result<ModelResponse, DefinitionError> {
-            *self.request.lock().expect("request lock") = Some(request);
-            Ok(self.response.clone())
-        }
-    }
-    struct RecordingDefinitionStore {
-        definition: AgentDefinitionV1,
-        loads: Arc<Mutex<u32>>,
-    }
-    impl DefinitionStore for RecordingDefinitionStore {
-        fn load(&self, _: &AgentId) -> Result<Option<AgentDefinitionV1>, DefinitionError> {
-            *self.loads.lock().expect("load count lock") += 1;
-            Ok(Some(self.definition.clone()))
-        }
-
-        fn list(&self) -> Result<Vec<AgentDefinitionV1>, DefinitionError> {
-            Ok(vec![self.definition.clone()])
-        }
-
-        fn save(&self, _: AgentDefinitionV1) -> Result<(), DefinitionError> {
-            Err(DefinitionError::AdapterFailure)
-        }
-
-        fn delete(&self, _: &AgentId) -> Result<(), DefinitionError> {
-            Err(DefinitionError::AdapterFailure)
-        }
-    }
-    #[derive(Default)]
-    struct RecordingToolRegistry {
-        resolved: Mutex<Vec<String>>,
-        invoked: Mutex<Vec<String>>,
-    }
-    impl ToolRegistry for RecordingToolRegistry {
-        fn resolve(&self, id: &str) -> Result<ToolDescriptor, DefinitionError> {
-            self.resolved
-                .lock()
-                .expect("resolved tools lock")
-                .push(id.to_owned());
-            Ok(ToolDescriptor { id: id.to_owned() })
-        }
-
-        fn invoke(&self, tool: &ToolDescriptor, _: ToolRequest) -> Result<String, DefinitionError> {
-            self.invoked
-                .lock()
-                .expect("invoked tools lock")
-                .push(tool.id.clone());
-            Ok(String::new())
-        }
-    }
-    #[test]
-    fn invalid_definition_and_references_are_rejected() {
-        let mut value = definition("valid", vec![]);
-        value.instructions.clear();
-        assert_eq!(
-            validate_definition(&value),
-            Err(DefinitionError::InvalidDefinition)
-        );
-        for reference in ["/tmp/x", "provider:model", "../skill", "a b", "UPPER", "a/"] {
-            value = definition("valid", vec![]);
-            value.model.reference = reference.to_owned();
-            assert_eq!(
-                validate_definition(&value),
-                Err(DefinitionError::InvalidReference)
-            );
-        }
-    }
-    #[test]
-    fn builtins_win_collisions_and_are_protected() {
-        let registry = AgentRegistry::new(
-            vec![definition("built-in", vec![])],
-            InMemoryDefinitionStore::default(),
-            catalog(),
-        )
-        .expect("registry");
-        assert_eq!(
-            registry.register(definition("built-in", vec![])),
-            Err(DefinitionError::BuiltinProtected)
-        );
-        assert_eq!(
-            registry.delete(&AgentId::new("built-in").expect("id")),
-            Err(DefinitionError::BuiltinProtected)
-        );
-    }
-    #[test]
-    fn scope_digest_canonicalizes_sets_and_all_policy_fields() {
-        let mut left = definition("agent", vec!["b", "a", "a"]);
-        left.skills = vec!["b".to_owned(), "a".to_owned()];
-        left.steering = vec!["y".to_owned(), "x".to_owned()];
-        let mut right = left.clone();
-        right.skills.reverse();
-        right.steering.reverse();
-        right.allowed_tool_ids.reverse();
-        let tools = vec![
-            ToolDescriptor { id: "a".to_owned() },
-            ToolDescriptor { id: "b".to_owned() },
-        ];
-        let digest = capability_scope_digest(&left, &tools);
-        assert_eq!(digest.len(), 64);
-        assert_eq!(
-            digest,
-            "f5c2d8563ad523b7683d7045d18c3a9936ff43e283e974aeb0ea303851e79af3"
-        );
-        assert_eq!(digest, capability_scope_digest(&right, &tools));
-        for mutate in [0_u8, 1, 2, 3, 4, 5, 6, 7] {
-            let mut changed = left.clone();
-            match mutate {
-                0 => changed.model.reference.push('x'),
-                1 => changed.memory.enabled = true,
-                2 => {
-                    changed.knowledge.enabled = true;
-                    changed.knowledge.max_results = 1;
-                }
-                3 => changed.sandbox.allow_execution = true,
-                4 => changed.communication.allow_messages = true,
-                5 => changed.limits.max_tool_calls = 3,
-                6 => changed.limits.max_output_bytes = 101,
-                _ => changed.instructions.push('!'),
-            }
-            assert_ne!(
-                capability_scope_digest(&left, &tools),
-                capability_scope_digest(&changed, &tools)
-            );
-        }
-        for changed in [
-            AgentDefinitionV1 {
-                skills: vec!["other".to_owned()],
-                ..left.clone()
-            },
-            AgentDefinitionV1 {
-                steering: vec!["other".to_owned()],
-                ..left.clone()
-            },
-        ] {
-            assert_ne!(
-                capability_scope_digest(&left, &tools),
-                capability_scope_digest(&changed, &tools)
-            );
-        }
-        assert_ne!(
-            capability_scope_digest(&left, &tools),
-            capability_scope_digest(&left, &[ToolDescriptor { id: "a".to_owned() }])
-        );
-    }
-    #[test]
-    fn runtime_scopes_model_and_all_enabled_capabilities() {
-        let mut value = definition("agent", vec!["allowed"]);
-        value.memory = MemoryPolicy {
-            enabled: true,
-            max_items: 1,
-        };
-        value.knowledge = KnowledgePolicy {
-            enabled: true,
-            max_results: 1,
-        };
-        let tools = FixedToolRegistry::new([(String::from("allowed"), String::from("tool"))]);
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::new(vec!["knowledge".to_owned()]);
-        let sandbox = DenySandbox;
-        let result = runtime(
-            value,
-            ModelResponse {
-                output: "ok".to_owned(),
-                tool_calls: vec![ToolCall {
-                    tool_id: "allowed".to_owned(),
-                    input: String::new(),
-                }],
-                capability_requests: vec![
-                    CapabilityRequest::MemoryWrite {
-                        value: "memory".to_owned(),
-                    },
-                    CapabilityRequest::MemoryRecall {
-                        query: "memory".to_owned(),
-                    },
-                    CapabilityRequest::KnowledgeSearch {
-                        query: "knowledge".to_owned(),
-                    },
-                ],
-            },
-            &tools,
-            &memory,
-            &knowledge,
-            &sandbox,
-        )
-        .invoke(&AgentId::new("agent").expect("id"), String::new())
-        .expect("result");
-        assert_eq!(result.events.len(), 5);
-    }
-    #[test]
-    fn provider_requested_unknown_tool_is_rejected() {
-        let tools = FixedToolRegistry::new([(String::from("allowed"), String::from("tool"))]);
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-
-        let result = runtime(
-            definition("agent", vec!["allowed"]),
-            ModelResponse {
-                output: String::new(),
-                tool_calls: vec![ToolCall {
-                    tool_id: "unknown".to_owned(),
-                    input: String::new(),
-                }],
-                capability_requests: vec![],
-            },
-            &tools,
-            &memory,
-            &knowledge,
-            &sandbox,
-        )
-        .invoke(&AgentId::new("agent").expect("id"), String::new());
-
-        assert_eq!(
-            result,
-            Err(DefinitionError::ToolDisallowed("unknown".to_owned()))
-        );
-    }
-
-    #[test]
-    fn provider_requested_definition_disallowed_tool_is_rejected() {
-        let tools = FixedToolRegistry::new([
-            (String::from("allowed"), String::from("allowed-output")),
-            (String::from("known"), String::from("known-output")),
-        ]);
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-
-        let result = runtime(
-            definition("agent", vec!["allowed"]),
-            ModelResponse {
-                output: String::new(),
-                tool_calls: vec![ToolCall {
-                    tool_id: "known".to_owned(),
-                    input: String::new(),
-                }],
-                capability_requests: vec![],
-            },
-            &tools,
-            &memory,
-            &knowledge,
-            &sandbox,
-        )
-        .invoke(&AgentId::new("agent").expect("id"), String::new());
-
-        assert_eq!(
-            result,
-            Err(DefinitionError::ToolDisallowed("known".to_owned()))
-        );
-    }
-
-    #[test]
-    fn execution_enabled_sandbox_request_is_denied_by_deny_sandbox() {
-        let tools = FixedToolRegistry::default();
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let mut value = definition("agent", vec![]);
-        value.sandbox.allow_execution = true;
-
-        let result = runtime(
-            value,
-            ModelResponse {
-                output: String::new(),
-                tool_calls: vec![],
-                capability_requests: vec![CapabilityRequest::SandboxExecute {
-                    action: "inspect".to_owned(),
-                    arguments: vec![],
-                }],
-            },
-            &tools,
-            &memory,
-            &knowledge,
-            &sandbox,
-        )
-        .invoke(&AgentId::new("agent").expect("id"), String::new());
-
-        assert_eq!(result, Err(DefinitionError::SandboxDenied));
-    }
-
-    #[test]
-    fn disabled_capabilities_reject_before_adapter_calls() {
-        let tools = FixedToolRegistry::default();
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        for request in [
-            CapabilityRequest::MemoryRecall {
-                query: String::new(),
-            },
-            CapabilityRequest::KnowledgeSearch {
-                query: String::new(),
-            },
-            CapabilityRequest::SandboxExecute {
-                action: "test".to_owned(),
-                arguments: vec![],
-            },
-        ] {
-            let result = runtime(
-                definition("agent", vec![]),
-                ModelResponse {
-                    output: String::new(),
-                    tool_calls: vec![],
-                    capability_requests: vec![request],
-                },
-                &tools,
-                &memory,
-                &knowledge,
-                &sandbox,
-            )
-            .invoke(&AgentId::new("agent").expect("id"), String::new());
-            assert!(matches!(
-                result,
-                Err(DefinitionError::MemoryDenied
-                    | DefinitionError::KnowledgeDenied
-                    | DefinitionError::SandboxDenied)
-            ));
-        }
-    }
-    #[test]
-    fn absent_references_are_rejected_before_persistence() {
-        let store = InMemoryDefinitionStore::default();
-        let registry = AgentRegistry::new(vec![], store, catalog()).expect("registry");
-        let mut missing = definition("missing", vec![]);
-        missing.model.reference = "missing-model".to_owned();
-        assert_eq!(
-            registry.register(missing),
-            Err(DefinitionError::ReferenceUnavailable)
-        );
-        assert!(registry.list().expect("list").is_empty());
-    }
-    #[test]
-    fn factory_hard_ceilings_reject_oversized_definition_and_requests() {
-        let mut oversized = definition("agent", vec![]);
-        oversized.limits.max_tool_calls = MAX_TOOL_CALLS + 1;
-        assert_eq!(
-            validate_definition(&oversized),
-            Err(DefinitionError::InvalidDefinition)
-        );
-        let tools = FixedToolRegistry::default();
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let result = runtime(
-            definition("agent", vec![]),
-            ModelResponse {
-                output: String::new(),
-                tool_calls: vec![],
-                capability_requests: vec![CapabilityRequest::MemoryWrite {
-                    value: "x".repeat(MAX_MEMORY_WRITE_VALUE_BYTES + 1),
-                }],
-            },
-            &tools,
-            &memory,
-            &knowledge,
-            &sandbox,
-        )
-        .invoke(&AgentId::new("agent").expect("id"), String::new());
-        assert_eq!(result, Err(DefinitionError::LimitExceeded));
-    }
-
-    #[test]
-    fn effective_ceiling_intersection_is_canonical_and_cannot_elevate() {
-        let mut value = definition("agent", vec!["allowed"]);
-        value.memory = MemoryPolicy {
-            enabled: true,
-            max_items: 1,
-        };
-        value.sandbox.allow_execution = true;
-        let ceiling = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec![
-                "unknown".to_owned(),
-                "allowed".to_owned(),
-                "allowed".to_owned(),
-            ],
-            memory_enabled: true,
-            knowledge_enabled: true,
-            sandbox_execution_allowed: false,
-            communication_allowed: true,
-        };
-
-        assert_eq!(
-            ceiling.intersect(&value).expect("intersection"),
-            EffectiveCapabilityCeilingV1 {
-                allowed_tool_ids: vec!["allowed".to_owned()],
-                memory_enabled: true,
-                knowledge_enabled: false,
-                sandbox_execution_allowed: false,
-                communication_allowed: false,
-            }
-        );
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig {
-            cases: 64,
-            failure_persistence: None,
-            ..ProptestConfig::default()
-        })]
-
-        #[test]
-        fn effective_ceiling_intersection_is_order_independent_and_non_elevating(
-            definition_indices in prop::collection::vec(0_u8..8, 0..=16),
-            ceiling_indices in prop::collection::vec(0_u8..8, 0..=16),
-            capability_flags in prop::array::uniform4(any::<(bool, bool)>())
-        ) {
-            let [(definition_memory, ceiling_memory),
-                (definition_knowledge, ceiling_knowledge),
-                (definition_sandbox, ceiling_sandbox),
-                (definition_communication, ceiling_communication)] = capability_flags;
-            let definition_tools = definition_indices
-                .iter()
-                .map(|index| format!("tool{index}"))
-                .collect::<Vec<_>>();
-            let mut value = definition(
-                "agent",
-                definition_tools.iter().map(String::as_str).collect(),
-            );
-            value.memory = MemoryPolicy {
-                enabled: definition_memory,
-                max_items: u32::from(definition_memory),
-            };
-            value.knowledge = KnowledgePolicy {
-                enabled: definition_knowledge,
-                max_results: u32::from(definition_knowledge),
-            };
-            value.sandbox.allow_execution = definition_sandbox;
-            value.communication.allow_messages = definition_communication;
-            prop_assert_eq!(validate_definition(&value), Ok(()));
-
-            let ceiling = EffectiveCapabilityCeilingV1 {
-                allowed_tool_ids: ceiling_indices
-                    .iter()
-                    .map(|index| format!("tool{index}"))
-                    .collect(),
-                memory_enabled: ceiling_memory,
-                knowledge_enabled: ceiling_knowledge,
-                sandbox_execution_allowed: ceiling_sandbox,
-                communication_allowed: ceiling_communication,
-            };
-            prop_assert_eq!(validate_effective_capability_ceiling(&ceiling), Ok(()));
-
-            let intersection = ceiling.intersect(&value).expect("intersection");
-            let expected_tools = definition_indices
-                .iter()
-                .filter(|index| ceiling_indices.contains(index))
-                .map(|index| format!("tool{index}"))
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            prop_assert_eq!(&intersection.allowed_tool_ids, &expected_tools);
-            prop_assert!(intersection.allowed_tool_ids.windows(2).all(|pair| pair[0] < pair[1]));
-            let all_tools_are_shared = intersection.allowed_tool_ids.iter().all(|tool_id| {
-                value.allowed_tool_ids.contains(tool_id) && ceiling.allowed_tool_ids.contains(tool_id)
-            });
-            prop_assert!(all_tools_are_shared);
-            prop_assert_eq!(intersection.memory_enabled, definition_memory && ceiling_memory);
-            prop_assert_eq!(intersection.knowledge_enabled, definition_knowledge && ceiling_knowledge);
-            prop_assert_eq!(
-                intersection.sandbox_execution_allowed,
-                definition_sandbox && ceiling_sandbox
-            );
-            prop_assert_eq!(
-                intersection.communication_allowed,
-                definition_communication && ceiling_communication
-            );
-
-            let mut reordered_definition = value.clone();
-            reordered_definition.allowed_tool_ids.reverse();
-            reordered_definition
-                .allowed_tool_ids
-                .extend(value.allowed_tool_ids.clone());
-            let mut reordered_ceiling = ceiling.clone();
-            reordered_ceiling.allowed_tool_ids.reverse();
-            reordered_ceiling
-                .allowed_tool_ids
-                .extend(ceiling.allowed_tool_ids.clone());
-            prop_assert_eq!(
-                reordered_ceiling
-                    .intersect(&reordered_definition)
-                    .expect("reordered intersection"),
-                intersection
-            );
-        }
-    }
-
-    #[test]
-    fn effective_ceiling_changes_scope_digest() {
-        let value = definition("agent", vec!["allowed"]);
-        let tools = vec![ToolDescriptor {
-            id: "allowed".to_owned(),
-        }];
-        let full = EffectiveCapabilityCeilingV1::full_definition(&value);
-        let denied = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec![],
-            memory_enabled: false,
-            knowledge_enabled: false,
-            sandbox_execution_allowed: false,
-            communication_allowed: false,
-        };
-
-        assert_ne!(
-            capability_scope_digest_with_ceiling(&value, &tools, &full).expect("digest"),
-            capability_scope_digest_with_ceiling(&value, &tools, &denied).expect("digest")
-        );
-    }
-
-    #[test]
-    fn ceiling_scope_excludes_denied_capabilities_and_compatibility_invoke_is_full_scope() {
-        let mut value = definition("agent", vec!["allowed"]);
-        value.memory = MemoryPolicy {
-            enabled: true,
-            max_items: 1,
-        };
-        value.knowledge = KnowledgePolicy {
-            enabled: true,
-            max_results: 1,
-        };
-        value.sandbox.allow_execution = true;
-        value.communication.allow_messages = true;
-        let registry = AgentRegistry::new(
-            vec![value.clone()],
-            InMemoryDefinitionStore::default(),
-            catalog(),
-        )
-        .expect("registry");
-        let model = RecordingModel {
-            request: Mutex::new(None),
-            response: ModelResponse {
-                output: String::new(),
-                tool_calls: vec![],
-                capability_requests: vec![],
-            },
-        };
-        let tools = FixedToolRegistry::new([(String::from("allowed"), String::new())]);
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let runtime =
-            LocalAgentRuntime::new(&registry, &model, &tools, &memory, &knowledge, &sandbox);
-        let id = AgentId::new("agent").expect("id");
-        let ceiling = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec![],
-            memory_enabled: false,
-            knowledge_enabled: false,
-            sandbox_execution_allowed: false,
-            communication_allowed: false,
-        };
-
-        let denied = runtime
-            .invoke_with_ceiling(&id, String::new(), &ceiling)
-            .expect("denied scope invocation");
-        let denied_scope = model
-            .request
-            .lock()
-            .expect("request lock")
-            .as_ref()
-            .expect("model request")
-            .capability_scope
-            .clone();
-        assert!(denied_scope.allowed_tool_ids.is_empty());
-        assert!(!denied_scope.memory.enabled);
-        assert!(!denied_scope.knowledge.enabled);
-        assert!(!denied_scope.sandbox.allow_execution);
-        assert!(!denied_scope.communication.allow_messages);
-        let full = runtime
-            .invoke(&id, String::new())
-            .expect("compatibility invocation");
-        assert_ne!(denied.capability_scope_digest, full.capability_scope_digest);
-        assert_eq!(
-            full.capability_scope_digest,
-            capability_scope_digest(
-                &value,
-                &[ToolDescriptor {
-                    id: "allowed".to_owned()
-                }]
-            )
-        );
-    }
-
-    #[test]
-    fn ceiling_denies_requests_before_the_corresponding_adapter_operation() {
-        let mut value = definition("agent", vec!["allowed"]);
-        value.memory = MemoryPolicy {
-            enabled: true,
-            max_items: 1,
-        };
-        value.knowledge = KnowledgePolicy {
-            enabled: true,
-            max_results: 1,
-        };
-        value.sandbox.allow_execution = true;
-        let tools = FixedToolRegistry::new([(String::from("allowed"), String::new())]);
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let ceiling = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec![],
-            memory_enabled: false,
-            knowledge_enabled: false,
-            sandbox_execution_allowed: false,
-            communication_allowed: false,
-        };
-        for (response, expected) in [
-            (
-                ModelResponse {
-                    output: String::new(),
-                    tool_calls: vec![ToolCall {
-                        tool_id: "allowed".to_owned(),
-                        input: String::new(),
-                    }],
-                    capability_requests: vec![],
-                },
-                DefinitionError::ToolDisallowed("allowed".to_owned()),
-            ),
-            (
-                ModelResponse {
-                    output: String::new(),
-                    tool_calls: vec![],
-                    capability_requests: vec![CapabilityRequest::MemoryRecall {
-                        query: String::new(),
-                    }],
-                },
-                DefinitionError::MemoryDenied,
-            ),
-            (
-                ModelResponse {
-                    output: String::new(),
-                    tool_calls: vec![],
-                    capability_requests: vec![CapabilityRequest::KnowledgeSearch {
-                        query: String::new(),
-                    }],
-                },
-                DefinitionError::KnowledgeDenied,
-            ),
-            (
-                ModelResponse {
-                    output: String::new(),
-                    tool_calls: vec![],
-                    capability_requests: vec![CapabilityRequest::SandboxExecute {
-                        action: "inspect".to_owned(),
-                        arguments: vec![],
-                    }],
-                },
-                DefinitionError::SandboxDenied,
-            ),
-        ] {
-            let result = runtime(
-                value.clone(),
-                response,
-                &tools,
-                &memory,
-                &knowledge,
-                &sandbox,
-            )
-            .invoke_with_ceiling(
-                &AgentId::new("agent").expect("id"),
-                String::new(),
-                &ceiling,
-            );
-            assert_eq!(result, Err(expected));
-        }
-    }
-
-    #[test]
-    fn invalid_ceiling_is_rejected_before_the_model_is_called() {
-        let value = definition("agent", vec![]);
-        let registry =
-            AgentRegistry::new(vec![value], InMemoryDefinitionStore::default(), catalog())
-                .expect("registry");
-        let model = RecordingModel {
-            request: Mutex::new(None),
-            response: ModelResponse {
-                output: String::new(),
-                tool_calls: vec![],
-                capability_requests: vec![],
-            },
-        };
-        let tools = RecordingToolRegistry::default();
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let runtime =
-            LocalAgentRuntime::new(&registry, &model, &tools, &memory, &knowledge, &sandbox);
-        let malformed_ceiling = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec!["Invalid Tool".to_owned()],
-            memory_enabled: false,
-            knowledge_enabled: false,
-            sandbox_execution_allowed: false,
-            communication_allowed: false,
-        };
-
-        assert_eq!(
-            runtime.invoke_with_ceiling(
-                &AgentId::new("agent").expect("id"),
-                String::new(),
-                &malformed_ceiling,
-            ),
-            Err(DefinitionError::InvalidReference)
-        );
-        assert!(model.request.lock().expect("request lock").is_none());
-        assert!(
-            tools
-                .resolved
-                .lock()
-                .expect("resolved tools lock")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn invocation_paths_load_one_definition_snapshot_each() {
-        let value = definition("agent", vec![]);
-        let loads = Arc::new(Mutex::new(0));
-        let registry = AgentRegistry::new(
-            vec![],
-            RecordingDefinitionStore {
-                definition: value,
-                loads: Arc::clone(&loads),
-            },
-            catalog(),
-        )
-        .expect("registry");
-        let model = StaticModelProvider::new(ModelResponse {
-            output: String::new(),
-            tool_calls: vec![],
-            capability_requests: vec![],
-        });
-        let tools = FixedToolRegistry::default();
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let runtime =
-            LocalAgentRuntime::new(&registry, &model, &tools, &memory, &knowledge, &sandbox);
-        let id = AgentId::new("agent").expect("id");
-        let ceiling = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec![],
-            memory_enabled: false,
-            knowledge_enabled: false,
-            sandbox_execution_allowed: false,
-            communication_allowed: false,
-        };
-
-        runtime
-            .invoke(&id, String::new())
-            .expect("legacy invocation");
-        assert_eq!(*loads.lock().expect("load count lock"), 1);
-        runtime
-            .invoke_with_ceiling(&id, String::new(), &ceiling)
-            .expect("ceiling invocation");
-        assert_eq!(*loads.lock().expect("load count lock"), 2);
-    }
-
-    #[test]
-    fn ceiling_denied_model_tool_is_rejected_before_registry_resolution_or_invocation() {
-        let value = definition("agent", vec!["allowed"]);
-        let registry =
-            AgentRegistry::new(vec![value], InMemoryDefinitionStore::default(), catalog())
-                .expect("registry");
-        let model = StaticModelProvider::new(ModelResponse {
-            output: String::new(),
-            tool_calls: vec![ToolCall {
-                tool_id: "allowed".to_owned(),
-                input: String::new(),
-            }],
-            capability_requests: vec![],
-        });
-        let tools = RecordingToolRegistry::default();
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let runtime =
-            LocalAgentRuntime::new(&registry, &model, &tools, &memory, &knowledge, &sandbox);
-        let ceiling = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec![],
-            memory_enabled: false,
-            knowledge_enabled: false,
-            sandbox_execution_allowed: false,
-            communication_allowed: false,
-        };
-
-        assert_eq!(
-            runtime.invoke_with_ceiling(
-                &AgentId::new("agent").expect("id"),
-                String::new(),
-                &ceiling,
-            ),
-            Err(DefinitionError::ToolDisallowed("allowed".to_owned()))
-        );
-        assert!(
-            tools
-                .resolved
-                .lock()
-                .expect("resolved tools lock")
-                .is_empty()
-        );
-        assert!(tools.invoked.lock().expect("invoked tools lock").is_empty());
-    }
-
-    #[test]
-    fn ceiling_denied_tools_do_not_reach_the_tool_registry() {
-        let value = definition("agent", vec!["allowed"]);
-        let registry =
-            AgentRegistry::new(vec![value], InMemoryDefinitionStore::default(), catalog())
-                .expect("registry");
-        let model = StaticModelProvider::new(ModelResponse {
-            output: String::new(),
-            tool_calls: vec![],
-            capability_requests: vec![],
-        });
-        let tools = RecordingToolRegistry::default();
-        let memory = InMemoryMemoryStore::default();
-        let knowledge = StaticKnowledgeStore::default();
-        let sandbox = DenySandbox;
-        let runtime =
-            LocalAgentRuntime::new(&registry, &model, &tools, &memory, &knowledge, &sandbox);
-        let denying_ceiling = EffectiveCapabilityCeilingV1 {
-            allowed_tool_ids: vec![],
-            memory_enabled: false,
-            knowledge_enabled: false,
-            sandbox_execution_allowed: false,
-            communication_allowed: false,
-        };
-
-        runtime
-            .invoke_with_ceiling(
-                &AgentId::new("agent").expect("id"),
-                String::new(),
-                &denying_ceiling,
-            )
-            .expect("a ceiling may remove every tool without blocking invocation");
-        assert!(
-            tools
-                .resolved
-                .lock()
-                .expect("resolved tools lock")
-                .is_empty(),
-            "a ceiling-denied tool must not reach ToolRegistry::resolve"
-        );
-        assert!(
-            tools.invoked.lock().expect("invoked tools lock").is_empty(),
-            "a ceiling-denied tool must not reach ToolRegistry::invoke"
-        );
-    }
 }

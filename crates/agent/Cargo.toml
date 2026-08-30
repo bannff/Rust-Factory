@@ -16,9 +16,11 @@ status = "implemented"
 # no feature is enabled by default, so a consumer that wants only the typed Rust
 # contracts compiles no transport, schema, or runtime dependency.
 [features]
-mcp = ["dep:anyhow", "dep:policy", "dep:rmcp", "dep:schemars", "dep:serde", "dep:serde_json"]
+mcp = ["dep:anyhow", "dep:policy", "dep:rmcp", "dep:schemars", "dep:serde"]
 
 [dependencies]
+llm-gateway = { path = "../llm-gateway", version = "=0.1.0" }
+serde_json.workspace = true
 sha2.workspace = true
 
 anyhow = { workspace = true, optional = true }
@@ -26,9 +28,9 @@ policy = { path = "../policy", version = "=0.1.0", optional = true }
 rmcp = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
+llm-gateway = { path = "../llm-gateway", version = "=0.1.0", features = ["static"] }
 proptest.workspace = true
 
 [lints]

@@ -2,14 +2,18 @@
 
 GitHub issue: #9
 
-> **Superseded in part by [Issue #11](https://github.com/bannff/Rust-Factory/issues/11).**
+> **Superseded in part by [Issue #11](https://github.com/bannff/Rust-Factory/issues/11) and [Issue #34](https://github.com/bannff/Rust-Factory/issues/34).**
 > This spec records the Issue #9 scaffold rollout as delivered, then revised.
-> Requirement 1's 13-family enumeration no longer holds: 9 of those families
-> own no package. Only `model-gateway` and `sandbox` remain as status-only
-> trees; `workspace-governance`, `identity`, `memory`, `knowledge`,
-> `verification`, `message-bus`, `cache`, `graph`, `observability`, and
-> `notification` remain roadmap items tracked in GitHub issues and GitHub
-> Projects, and `tool-execution` folded into Sandbox. Requirements 2, 3, and 5
+> Requirement 1's 13-family enumeration no longer holds: 10 of those families
+> own no package. Only `sandbox` remains a status-only tree; the former
+> `model-gateway` tree was renamed and replaced by the implemented
+> `llm-gateway` brick under Issue #34. Final Rust SME and meta-architect
+> gates approved with no Blocker or Required findings remaining; only merge and
+> issue delivery remain. There is no current implementation-pending scaffold
+> claim. `workspace-governance`,
+> `identity`, `memory`, `knowledge`, `verification`, `message-bus`, `cache`,
+> `graph`, `observability`, and `notification` remain roadmap items tracked in
+> GitHub issues and GitHub Projects, and `tool-execution` folded into Sandbox. Requirements 2, 3, and 5
 > remain in force for any package that is status-only. Requirement 4's
 > validator was generalized to cover every workspace package and reconcile
 > workspace members, on-disk package directories, Cargo metadata, and package

@@ -5,15 +5,17 @@
 ```text
 agent
   definition + registry + policy + invocation contracts
-  DefinitionStore / ModelProvider / ToolRegistry / MemoryStore /
-  KnowledgeStore / Sandbox traits
+  DefinitionStore / ToolRegistry / MemoryStore / KnowledgeStore / Sandbox
+                 │ async generation through llm_gateway::LlmProvider
                  ↑
   deterministic local adapters (first) → provider/storage/sandbox adapters (later)
                  ↑
   agent::mcp: control-plane validation, registry, bounded invoke
 ```
 
-The core owns data and policy. Each adapter implements one core-owned trait. The MCP crate receives those traits through dependency injection and never selects a provider or constructs a storage/sandbox adapter itself.
+The core owns Agent data, scope, trusted `InvocationContextV1`, and policy. LLM Gateway owns the provider-neutral generation port and bounded request/response/evidence types. Each Agent adapter implements one Agent-owned core trait; `LocalAgentRuntime` receives `llm_gateway::LlmProvider` by inward dependency. The MCP module receives those traits, the provider, trusted context, and composition-owned invocation-control factory through dependency injection and never selects a provider or constructs storage/sandbox adapters itself.
+
+> **Issue #34 supersession:** the original delivered design used Agent-owned synchronous `ModelProvider`, `ModelRequest`, and `StaticModelProvider` contracts. Those names below would be historical only; current and future implementation uses `llm_gateway::LlmProvider`, borrowed async `InvocationControl`, explicit Agent `InvocationContextV1`, and `llm_gateway::r#static::StaticProvider`.
 
 ## Definition and registry
 
@@ -23,25 +25,25 @@ The core owns data and policy. Each adapter implements one core-owned trait. The
 
 ## Local invocation
 
-`LocalAgentRuntime` receives an `AgentRegistry`, a `ModelProvider`, and capability ports. On invocation it:
+`LocalAgentRuntime` receives an `AgentRegistry`, an `llm_gateway::LlmProvider`, and Agent-owned capability ports. Each invocation also receives a trusted `InvocationContextV1` plus one borrowed async `llm_gateway::InvocationControl`. On invocation it:
 
 1. resolves a validated definition;
-2. resolves only declared tool IDs and allowed policies;
-3. computes `capability_scope_digest` from canonical definition and resolved capability identifiers;
-4. constructs one provider-neutral request;
-5. processes provider-requested tool calls through the allowed registry only; and
-6. emits ordered, normalized events followed by a terminal result.
+2. intersects the effective capability ceiling and resolves only allowed policies/tool IDs;
+3. computes `capability_scope_digest` from canonical definition and resolved capability identifiers, excluding invocation identity;
+4. constructs one bounded `llm_gateway::GenerateRequest`;
+5. awaits the provider, plans and scope-checks every returned call, and passes the unchanged invocation context only to Agent-owned effect ports; and
+6. emits ordered, normalized events followed by a terminal result with bounded `InvocationModelEvidence`.
 
-The initial provider adapter is deterministic and static. It proves policy enforcement and event/result contracts without sending network requests or selecting a model SDK.
+Deterministic tests use `llm_gateway::r#static::StaticProvider`. Provider clients, stable key creation, cancellation/deadline wake mechanics, runtime/timer ownership, credentials, egress policy, and lifecycle remain composition concerns.
 
 ## Ports
 
+- `llm_gateway::LlmProvider`: asynchronously execute one bounded provider-neutral generation request under borrowed invocation control and return normalized output/evidence.
 - `DefinitionStore`: load/list/save user definitions; built-ins are not persisted through this port.
-- `ModelProvider`: execute one bounded provider-neutral request and return normalized model/tool-call output.
 - `ToolRegistry`: resolve and invoke only registered typed tools by ID.
-- `MemoryStore`: scoped recall and write requests.
-- `KnowledgeStore`: scoped search requests.
-- `Sandbox`: typed execute request; the initial adapter always denies.
+- `MemoryStore`: scoped recall and write requests with explicit invocation context.
+- `KnowledgeStore`: scoped search requests with explicit invocation context.
+- `Sandbox`: typed execute request with explicit invocation context; the initial adapter always denies.
 
 Each port has typed request and response values. Core contracts do not expose strings that are interpreted as shell commands, source code, provider configuration, or arbitrary filesystem paths.
 
