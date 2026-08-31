@@ -6,7 +6,7 @@ The durable canonical Rust Factory agent handbook is the GitHub Wiki at the exac
 
 ```text
 Wiki remote: https://github.com/bannff/Rust-Factory.wiki.git
-Wiki SHA: c324c6fb37d92b4ebedba0a920839892f98c657d
+Wiki SHA: 9985702129a653d1e963edb67236f4c934e4d2c8
 Tracking issue: https://github.com/bannff/Rust-Factory/issues/45
 Kiro compatibility snapshot: main repository commit 0f7db0d770a14d02e878e620293e22eece3e2c1c; all .kiro/steering/**/*.md and .kiro/skills/**/*.md files
 ```
@@ -16,8 +16,8 @@ Retrieve and verify exactly that revision:
 ```sh
 git clone https://github.com/bannff/Rust-Factory.wiki.git rust-factory-wiki
 cd rust-factory-wiki
-git checkout --detach c324c6fb37d92b4ebedba0a920839892f98c657d
-test "$(git rev-parse HEAD)" = c324c6fb37d92b4ebedba0a920839892f98c657d
+git checkout --detach 9985702129a653d1e963edb67236f4c934e4d2c8
+test "$(git rev-parse HEAD)" = 9985702129a653d1e963edb67236f4c934e4d2c8
 test -z "$(git status --porcelain)"
 ```
 
