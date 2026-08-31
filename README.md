@@ -2,6 +2,12 @@
 
 Rust Factory is a domain-agnostic foundation for reliable Rust services, libraries, and tools.
 
+## Agent handbook
+
+The durable canonical agent handbook is the Git Wiki revision pinned in [`AGENTS.md`](AGENTS.md): `000f0cf20a0261a497508c5c5af96fbe4a37e352`, tracked by [#42](https://github.com/bannff/Rust-Factory/issues/42). Clone, detach, and verify that exact revision before relying on handbook guidance. The [Wiki Home](https://github.com/bannff/Rust-Factory/wiki/Home) and [Handbook Governance](https://github.com/bannff/Rust-Factory/wiki/Handbook-Governance) pages are non-authoritative browser navigation unless verified against the pin.
+
+Repository executable enforcement takes precedence over the pinned handbook; the handbook takes precedence over the Kiro compatibility snapshot. The complete precedence is system/platform/user instructions → executable repository enforcement and repository state → pinned Wiki handbook → Kiro snapshot → host defaults and floating Wiki content. If the Wiki is unavailable or verification fails, retain system/platform/user instructions and executable enforcement, then use the Kiro snapshot; do not substitute another Wiki revision. [`AGENTS.md`](AGENTS.md) is the complete canonical bootstrap.
+
 ## Workspace
 
 One brick is one crate. Its agent-facing MCP surface and its local adapters are
