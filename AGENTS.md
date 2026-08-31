@@ -6,8 +6,8 @@ The durable canonical Rust Factory agent handbook is the GitHub Wiki at the exac
 
 ```text
 Wiki remote: https://github.com/bannff/Rust-Factory.wiki.git
-Wiki SHA: 000f0cf20a0261a497508c5c5af96fbe4a37e352
-Tracking issue: https://github.com/bannff/Rust-Factory/issues/42
+Wiki SHA: c324c6fb37d92b4ebedba0a920839892f98c657d
+Tracking issue: https://github.com/bannff/Rust-Factory/issues/45
 Kiro compatibility snapshot: main repository commit 0f7db0d770a14d02e878e620293e22eece3e2c1c; all .kiro/steering/**/*.md and .kiro/skills/**/*.md files
 ```
 
@@ -16,8 +16,8 @@ Retrieve and verify exactly that revision:
 ```sh
 git clone https://github.com/bannff/Rust-Factory.wiki.git rust-factory-wiki
 cd rust-factory-wiki
-git checkout --detach 000f0cf20a0261a497508c5c5af96fbe4a37e352
-test "$(git rev-parse HEAD)" = 000f0cf20a0261a497508c5c5af96fbe4a37e352
+git checkout --detach c324c6fb37d92b4ebedba0a920839892f98c657d
+test "$(git rev-parse HEAD)" = c324c6fb37d92b4ebedba0a920839892f98c657d
 test -z "$(git status --porcelain)"
 ```
 
@@ -25,7 +25,7 @@ Continue only when every command succeeds. The Wiki’s browser pages and branch
 
 ## Canonical pages in the checked-out Wiki
 
-Read `Home.md`, `Handbook-Governance.md`, `Engineering-Principles.md`, `Delivery-Workflow.md`, `Multi-Agent-Coordination.md`, `Architecture.md`, and `Rust-Implementation-Skills.md`. Browser navigation is available at [Home](https://github.com/bannff/Rust-Factory/wiki/Home) and [Handbook Governance](https://github.com/bannff/Rust-Factory/wiki/Handbook-Governance), but is non-authoritative unless it is verified to render the pinned revision.
+Read `Home.md`, `Handbook-Governance.md`, `Engineering-Principles.md`, `Delivery-Workflow.md`, `CI-CD-and-Validation.md`, `Multi-Agent-Coordination.md`, `Architecture.md`, and `Rust-Implementation-Skills.md`. Browser navigation is available at [Home](https://github.com/bannff/Rust-Factory/wiki/Home), [Handbook Governance](https://github.com/bannff/Rust-Factory/wiki/Handbook-Governance), and [CI/CD and Validation](https://github.com/bannff/Rust-Factory/wiki/CI-CD-and-Validation), but is non-authoritative unless it is verified to render the pinned revision.
 
 ## Precedence and failure behavior
 
