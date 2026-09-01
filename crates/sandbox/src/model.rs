@@ -180,6 +180,7 @@ pub struct SandboxEvent {
     pub operation: SandboxOperation,
     pub sandbox_id: Option<SandboxId>,
     pub status: Option<SandboxStatus>,
+    pub tenant_id: TenantId,
     pub correlation_id: CorrelationId,
 }
 
