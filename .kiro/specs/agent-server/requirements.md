@@ -2,6 +2,23 @@
 
 GitHub issue: #6
 
+> **Superseded direction.** This specification's original Agent-only single-server
+> wording is superseded by the unified-project-server direction in the
+> [Canonical Brick Standard](../brick-standard/requirements.md) and the
+> [Living Factory Vision](../../steering/living-factory-vision.md): every
+> deployable project exposes exactly one binary, process, and unified MCP
+> server/router over `BoundedStdioTransport`, statically combining selected
+> brick `HandlerContribution`s and separately typed `factory_*` project
+> meta-tools. `agent-server` remains this factory's first composition root and
+> is scoped narrowly to Agent, Knowledge, LLM Gateway, and Policy static
+> adapters; it is not a permanent Agent-only topology, and a later composition
+> root MAY add further brick handlers to the same unified router without
+> launching a second server or process. Issue #6 tracks this first server,
+> issue #17 tracks `BoundedStdioTransport`'s first bounded production caller,
+> and issue #39 tracks a sample project built on this pattern. This
+> specification preserves the trust/Policy/transport safety obligations below
+> unchanged; it narrows only the topology framing.
+
 Add one thin local `agent-server` binary that composes the existing Agent MCP adapter with explicit, deterministic local dependencies. It proves the Factory composition-root pattern; it is not a new Agent runtime, transport, provider, persistence, or deployment framework.
 
 1. The composition root SHALL be a binary package under `projects/` declaring `role = "server"`. Its production dependencies SHALL be exact-pinned path dependencies on `agent` with its `mcp` feature, `knowledge` with its `static` feature, `llm-gateway` with its `static` feature, and `policy` with its `memory` feature (all `version = "=0.1.0"`), plus exact `anyhow`, `serde` with derive, `serde_json`, and `tokio` with `macros`, `rt-multi-thread`, and `io-std`. Unlike every library, the binary SHALL depend directly on `mcp-transport`, because transport binding is solely its responsibility. It SHALL have no filesystem/network/config-framework crate, provider SDK, or sandbox executor. The direct Knowledge and LLM Gateway dependencies compose their concrete static adapters; no brick dependency edge changes.

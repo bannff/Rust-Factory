@@ -1,0 +1,19 @@
+[package]
+name = "mcp-contract"
+description = "Transport-agnostic shared contract for composing brick MCP handlers into one unified project server."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[package.metadata.rust-factory]
+family = "mcp-contract"
+role = "infrastructure"
+status = "implemented"
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

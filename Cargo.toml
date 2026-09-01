@@ -3,6 +3,7 @@ members = [
     "crates/auth",
     "crates/storage",
     "crates/policy",
+    "crates/mcp-contract",
     "crates/mcp-transport",
     "crates/agent",
     "crates/project",
@@ -39,6 +40,7 @@ serdes-ai-evals = { version = "=0.2.6", default-features = false }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 sha2 = "=0.10.9"
+subprocess = "=1.2.1"
 tokio = { version = "=1.49.0", features = ["macros", "rt-multi-thread"] }
 
 [workspace.lints.rust]

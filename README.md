@@ -4,7 +4,7 @@ Rust Factory is a domain-agnostic foundation for reliable Rust services, librari
 
 ## Agent handbook
 
-The durable canonical agent handbook is the Git Wiki revision pinned in [`AGENTS.md`](AGENTS.md): `000f0cf20a0261a497508c5c5af96fbe4a37e352`, tracked by [#42](https://github.com/bannff/Rust-Factory/issues/42). Clone, detach, and verify that exact revision before relying on handbook guidance. The [Wiki Home](https://github.com/bannff/Rust-Factory/wiki/Home) and [Handbook Governance](https://github.com/bannff/Rust-Factory/wiki/Handbook-Governance) pages are non-authoritative browser navigation unless verified against the pin.
+The durable canonical agent handbook is the Git Wiki revision pinned in [`AGENTS.md`](AGENTS.md): `54bc9397fc9bd2e1a3d781ff579d2c6a239738d0`, tracked by [#42](https://github.com/bannff/Rust-Factory/issues/42). Clone, detach, and verify that exact revision before relying on handbook guidance. The [Wiki Home](https://github.com/bannff/Rust-Factory/wiki/Home) and [Handbook Governance](https://github.com/bannff/Rust-Factory/wiki/Handbook-Governance) pages are non-authoritative browser navigation unless verified against the pin.
 
 Repository executable enforcement takes precedence over the pinned handbook; the handbook takes precedence over the Kiro compatibility snapshot. The complete precedence is system/platform/user instructions → executable repository enforcement and repository state → pinned Wiki handbook → Kiro snapshot → host defaults and floating Wiki content. If the Wiki is unavailable or verification fails, retain system/platform/user instructions and executable enforcement, then use the Kiro snapshot; do not substitute another Wiki revision. [`AGENTS.md`](AGENTS.md) is the complete canonical bootstrap.
 
@@ -21,13 +21,13 @@ schema, error-framework, filesystem, or async-runtime dependency.
 | `crates/workflow` | `mcp`, `memory` | Bounded workflow lifecycle for one agent invocation. |
 | `crates/evaluation` | `local`, `memory`, `mcp`, `serdes-ai-evals`, `settings` | Framework-backed immutable evaluation over terminal Workflow evidence, with selectable deterministic executors and bounded process-local result storage. Composition-ready; not runnable or project-ready until [#16] supplies the evidence bridge and composition proof. |
 | `crates/project` | `mcp`, `fs` | Blueprint validation, generation planning, and root-confined materialization. |
-| `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. No MCP surface, by design. |
-| `crates/auth` | `biscuit` | **Implemented.** Token-native synchronous authorization with identity derived from direct verified-authority facts and bounded opaque deny behavior. No MCP, Policy migration, revocation, audit, or process-boundary guarantee; composition owns private keys and blocking scheduling. |
-| `crates/storage` | `local`, `redb`, `settings` | Bounded authoritative tenant- and namespace-scoped versioned objects, with a volatile local adapter and an `ImmediateCommit` redb adapter. No consumer migration or MCP surface in V1. |
+| `crates/policy` | `memory` | Trusted context, closed capabilities, and grant decisions. Mandatory `mcp` handler migration is pending; until it lands, Policy has no MCP surface and, once added, SHALL remain introspection-only and prohibit caller-supplied authorization decisions or grant mutation. |
+| `crates/auth` | `biscuit` | **Implemented.** Token-native synchronous authorization with identity derived from direct verified-authority facts and bounded opaque deny behavior. Mandatory `mcp` handler migration is pending; until it lands, Auth has no MCP surface and, once added, SHALL remain introspection-only and prohibit token minting or caller-supplied authorization decisions. No Policy migration, revocation, audit, or process-boundary guarantee; composition owns private keys and blocking scheduling. |
+| `crates/storage` | `local`, `redb`, `settings` | Bounded authoritative tenant- and namespace-scoped versioned objects, with a volatile local adapter and an `ImmediateCommit` redb adapter. No consumer migration yet. Mandatory `mcp` handler migration is pending; until it lands, Storage has no MCP surface and, once added, SHALL remain introspection-only and prohibit raw object CRUD. |
 | `crates/memory` | `local`, `agentic`, `settings`, `mcp` | Tenant-scoped agent memory behind one framework-agnostic port. Two selectable backends and a five-tool agent surface; no durable adapter. |
-| `crates/knowledge` | `static` | **Implemented.** Bounded synchronous framework-free `KnowledgeIndex`/`KnowledgeService` core with a std-only immutable static adapter; Agent migration is complete. No MCP, settings, ingestion, async, ranking, vector, remote, persistence, or lifecycle surface. Host-derived tenant/principal and a validated globally shared Agent definition select tenant + namespace; caller/model/tool cannot select scope, Policy/Agent admits the principal, the static adapter is not principal-partitioned, and global definition visibility neither globalizes the corpus nor authorizes cross-tenant data. Issue evidence, merge, and delivery remain pending. |
+| `crates/knowledge` | `static` | **Implemented.** Bounded synchronous framework-free `KnowledgeIndex`/`KnowledgeService` core with a std-only immutable static adapter; Agent migration is complete. No settings, ingestion, async, ranking, vector, remote, persistence, or lifecycle surface. Mandatory `mcp` handler migration is pending; until it lands, Knowledge has no MCP surface and, once added, SHALL remain introspection-only and prohibit unrestricted corpus access. Host-derived tenant/principal and a validated globally shared Agent definition select tenant + namespace; caller/model/tool cannot select scope, Policy/Agent admits the principal, the static adapter is not principal-partitioned, and global definition visibility neither globalizes the corpus nor authorizes cross-tenant data. Issue evidence, merge, and delivery remain pending. |
 | `crates/observability` | `local`, `opentelemetry`, `settings`, `mcp` | Bounded tenant-scoped operational logs with an evicting process-local reader, metadata-only OpenTelemetry API submission, and Policy-gated inspection; no durable audit/evidence guarantee. |
-| `crates/llm-gateway` | `static`, `genai` | **Implemented.** Bounded non-streaming `LlmProvider` core with deterministic static and injected-client genai adapters, Agent/Workflow async migration, trusted invocation context, tenant-isolation coverage, and bounded process-local broadcast cancellation. No MCP or settings surface, retries, streaming, remote-abort acknowledgement, durability, exactly-once, recovery, or process-boundary guarantee. No deployable composition exists. Composition owns configured clients, runtime/timer and deadline wake mechanics, stable invocation keys, cancellation source, credentials, endpoint/egress/TLS/proxy policy, concurrency, task supervision, lifecycle, and shutdown. |
+| `crates/llm-gateway` | `static`, `genai` | **Implemented.** Bounded non-streaming `LlmProvider` core with deterministic static and injected-client genai adapters, Agent/Workflow async migration, trusted invocation context, tenant-isolation coverage, and bounded process-local broadcast cancellation. No settings surface, retries, streaming, remote-abort acknowledgement, durability, exactly-once, recovery, or process-boundary guarantee. Mandatory `mcp` handler migration is pending; until it lands, LLM Gateway has no MCP surface and, once added, SHALL remain introspection-only and prohibit unrestricted provider invocation. No deployable composition exists. Composition owns configured clients, runtime/timer and deadline wake mechanics, stable invocation keys, cancellation source, credentials, endpoint/egress/TLS/proxy policy, concurrency, task supervision, lifecycle, and shutdown. |
 | `crates/sandbox` | — | Status-only scaffold; its provisional port still lives in `agent`. |
 | `crates/mcp-transport` | — | Shared bounded MCP stdio transport. Owns no capability. |
 
@@ -50,12 +50,17 @@ selection-to-constructor `match`, which belong to a composition binary. An
 adapter is feature-gated even when it adds no dependency, so the rule that a core
 module names no adapter keeps applying to it.
 
-`policy` has no MCP surface deliberately. It decides what an agent is permitted
-to do, so exposing it to agents would be a privilege-escalation seam whichever
-tools were chosen. Storage also deliberately has no MCP surface in V1: exposing
-raw object CRUD would bypass each consuming capability's serialization and
-domain rules. Agent-driven surfaces are therefore capability-specific, not a
-blanket requirement for every operable brick.
+Every mature `role = "brick"` package is required to own a bounded, feature-gated
+`mcp` handler exposing generated `<namespace>_capabilities` and `<namespace>_schema`
+discovery tools, even when its safe operational surface is introspection-only.
+Policy, Auth, Storage, Knowledge, and LLM Gateway are sensitive bricks: their
+handlers, once migrated, SHALL remain introspection-only and SHALL prohibit
+privilege or raw-bypass operations — no caller-supplied authorization decisions,
+grant mutation, token minting, raw object CRUD, unrestricted corpus access, or
+unrestricted provider invocation. Today these five bricks have not yet migrated
+and so currently expose no MCP surface at all; that absence is tracked migration
+debt on an explicit allowlist, not an architectural exception, and is not a
+blanket claim that any operable brick may permanently skip the mandatory handler.
 
 Storage retains authoritative versioned objects and never evicts them to recover
 capacity. Cache remains a separate, deferred, non-authoritative capability whose

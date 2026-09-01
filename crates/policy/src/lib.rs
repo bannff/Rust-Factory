@@ -80,6 +80,10 @@ pub enum CapabilityV1 {
     MemorySearch,
     MemoryForget,
     MemoryStatus,
+    SandboxStart,
+    SandboxExecute,
+    SandboxStatus,
+    SandboxStop,
 }
 impl CapabilityV1 {
     #[must_use]
@@ -105,6 +109,10 @@ impl CapabilityV1 {
             Self::MemorySearch => "memory_search",
             Self::MemoryForget => "memory_forget",
             Self::MemoryStatus => "memory_status",
+            Self::SandboxStart => "sandbox_start",
+            Self::SandboxExecute => "sandbox_execute",
+            Self::SandboxStatus => "sandbox_status",
+            Self::SandboxStop => "sandbox_stop",
         }
     }
 }
