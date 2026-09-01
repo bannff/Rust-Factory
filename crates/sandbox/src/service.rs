@@ -27,6 +27,7 @@ impl<S: Sandbox, E: SandboxEventSink> SandboxService<S, E> {
             operation,
             sandbox_id: id,
             status,
+            tenant_id: context.tenant_id.clone(),
             correlation_id: context.correlation_id.clone(),
         });
     }

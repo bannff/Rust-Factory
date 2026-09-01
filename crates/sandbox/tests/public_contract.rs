@@ -16,6 +16,23 @@ fn id() -> SandboxId {
 }
 
 #[test]
+fn tenant_id_equality_is_real_field_comparison_not_vacuous() {
+    // Guards the tenant-comparison assertions used throughout this file's
+    // #67 regression tests: PartialEq must genuinely distinguish different
+    // tenant values, not be trivially true (e.g. via a discriminant-only or
+    // always-true impl).
+    assert_eq!(
+        TenantId::new("tenant-alpha").unwrap(),
+        TenantId::new("tenant-alpha").unwrap()
+    );
+    assert_ne!(
+        TenantId::new("tenant-alpha").unwrap(),
+        TenantId::new("tenant-beta").unwrap()
+    );
+    assert_ne!(TenantId::new("a").unwrap(), TenantId::new("b").unwrap());
+}
+
+#[test]
 fn identifiers_and_sandbox_ids_are_closed() {
     for invalid in ["", "Upper", "has.dot", "has space", "-leading"] {
         assert_eq!(TenantId::new(invalid), Err(SandboxError::InvalidRequest));
@@ -140,7 +157,151 @@ fn service_delegates_four_operations_and_emits_safe_events() {
             sandbox_id: started.sandbox_id,
         })
         .unwrap();
-    assert_eq!(events.0.lock().unwrap().len(), 4);
+    let recorded = events.0.lock().unwrap();
+    assert_eq!(recorded.len(), 4);
+    for event in recorded.iter() {
+        assert_eq!(
+            event.tenant_id,
+            TenantId::new("tenant").unwrap(),
+            "every emitted event must carry the tenant of the request that produced it"
+        );
+    }
+}
+
+#[test]
+fn emitted_events_carry_the_correct_tenant_per_call_not_a_fixed_or_stale_one() {
+    // A single long-lived SandboxService/sink instance already serves many
+    // tenants across calls (SandboxMcp::authorize resolves a fresh tenant
+    // per call). Prove tenant_id on each emitted event matches THAT call's
+    // context, not some value fixed at construction or leaked from a prior
+    // call - regression proof for issue #67.
+    let events = Arc::new(Events::default());
+    let service = SandboxService::new(FakeSandbox, SharedEvents(events.clone()));
+
+    let alpha = service
+        .start(StartRequest {
+            context: context("tenant-alpha"),
+            profile_id: ProfileId::new("rust").unwrap(),
+        })
+        .unwrap();
+    let beta = service
+        .start(StartRequest {
+            context: context("tenant-beta"),
+            profile_id: ProfileId::new("rust").unwrap(),
+        })
+        .unwrap();
+    service
+        .stop(TargetRequest {
+            context: context("tenant-alpha"),
+            sandbox_id: alpha.sandbox_id,
+        })
+        .unwrap();
+    service
+        .stop(TargetRequest {
+            context: context("tenant-beta"),
+            sandbox_id: beta.sandbox_id,
+        })
+        .unwrap();
+
+    let recorded = events.0.lock().unwrap();
+    assert_eq!(recorded.len(), 4);
+    assert_eq!(
+        recorded[0].tenant_id,
+        TenantId::new("tenant-alpha").unwrap()
+    );
+    assert_eq!(recorded[1].tenant_id, TenantId::new("tenant-beta").unwrap());
+    assert_eq!(
+        recorded[2].tenant_id,
+        TenantId::new("tenant-alpha").unwrap()
+    );
+    assert_eq!(recorded[3].tenant_id, TenantId::new("tenant-beta").unwrap());
+}
+
+#[test]
+fn emitted_events_carry_the_correct_tenant_across_all_four_interleaved_operations() {
+    // The existing #67 regression test only interleaves start/stop. execute
+    // and status share the identical `emit` call site in SandboxService, so
+    // this exercises all four operations interleaved across two tenants on
+    // one shared SandboxService instance, proving none of the four leak or
+    // fix a tenant_id from another call.
+    let events = Arc::new(Events::default());
+    let service = SandboxService::new(FakeSandbox, SharedEvents(events.clone()));
+
+    let alpha = service
+        .start(StartRequest {
+            context: context("tenant-alpha"),
+            profile_id: ProfileId::new("rust").unwrap(),
+        })
+        .unwrap();
+    let beta = service
+        .start(StartRequest {
+            context: context("tenant-beta"),
+            profile_id: ProfileId::new("rust").unwrap(),
+        })
+        .unwrap();
+    service
+        .execute(ExecuteRequest {
+            context: context("tenant-beta"),
+            sandbox_id: beta.sandbox_id.clone(),
+            command: Command::new("cargo", vec!["test".into()], "", 1000).unwrap(),
+        })
+        .unwrap();
+    service
+        .execute(ExecuteRequest {
+            context: context("tenant-alpha"),
+            sandbox_id: alpha.sandbox_id.clone(),
+            command: Command::new("cargo", vec!["test".into()], "", 1000).unwrap(),
+        })
+        .unwrap();
+    service
+        .status(TargetRequest {
+            context: context("tenant-alpha"),
+            sandbox_id: alpha.sandbox_id.clone(),
+        })
+        .unwrap();
+    service
+        .status(TargetRequest {
+            context: context("tenant-beta"),
+            sandbox_id: beta.sandbox_id.clone(),
+        })
+        .unwrap();
+    service
+        .stop(TargetRequest {
+            context: context("tenant-beta"),
+            sandbox_id: beta.sandbox_id,
+        })
+        .unwrap();
+    service
+        .stop(TargetRequest {
+            context: context("tenant-alpha"),
+            sandbox_id: alpha.sandbox_id,
+        })
+        .unwrap();
+
+    let recorded = events.0.lock().unwrap();
+    assert_eq!(recorded.len(), 8);
+    let expected = [
+        (SandboxOperation::Start, "tenant-alpha"),
+        (SandboxOperation::Start, "tenant-beta"),
+        (SandboxOperation::Execute, "tenant-beta"),
+        (SandboxOperation::Execute, "tenant-alpha"),
+        (SandboxOperation::Status, "tenant-alpha"),
+        (SandboxOperation::Status, "tenant-beta"),
+        (SandboxOperation::Stop, "tenant-beta"),
+        (SandboxOperation::Stop, "tenant-alpha"),
+    ];
+    for (event, (operation, tenant)) in recorded.iter().zip(expected.iter()) {
+        assert_eq!(
+            event.operation, *operation,
+            "operation order must be preserved"
+        );
+        assert_eq!(
+            event.tenant_id,
+            TenantId::new(*tenant).unwrap(),
+            "event for {operation:?} must carry the tenant of the call that produced it, \
+             not a value leaked or fixed from another interleaved call"
+        );
+    }
 }
 
 #[test]
