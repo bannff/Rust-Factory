@@ -139,6 +139,10 @@ impl TelemetryContext {
     }
 }
 
+/// Truthful, not aspirational: every field states what an adapter has
+/// verified about its own behavior, never what it merely hopes or intends.
+/// An adapter that cannot verify a property SHALL report the conservative
+/// (safety-losing) value rather than the optimistic one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct TelemetryGuarantees {
@@ -146,6 +150,17 @@ pub struct TelemetryGuarantees {
     pub visible_across_processes: bool,
     pub delivery_confirmed: bool,
     pub queryable: bool,
+    /// `true` if calling `emit` may perform network or disk I/O, acquire a
+    /// lock that could be held during such I/O, or otherwise block for an
+    /// unbounded time. An adapter that wraps an injected downstream
+    /// dependency (for example an OTEL `Logger`/`Meter` constructed and
+    /// owned by a composition root) cannot observe or bound that
+    /// dependency's I/O behavior, and SHALL report `true` in that case:
+    /// "unknown" is not a safe substitute for "non-blocking" for a caller
+    /// deciding whether it is safe to invoke `emit` synchronously from a
+    /// hot path. This field describes the emit path only; it says nothing
+    /// about `query`.
+    pub may_block: bool,
 }
 
 // --- Trace/span model ---

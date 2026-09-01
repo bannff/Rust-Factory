@@ -106,6 +106,10 @@ const fn local_guarantees() -> TelemetryGuarantees {
         visible_across_processes: false,
         delivery_confirmed: true,
         queryable: true,
+        // In-memory `Mutex<VecDeque<_>>` only: no network or disk I/O.
+        // A mutex wait here is bounded, in-process contention, not the
+        // I/O hazard `may_block` exists to flag.
+        may_block: false,
     }
 }
 
