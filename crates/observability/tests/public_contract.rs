@@ -278,6 +278,7 @@ impl TelemetrySink for CaptureSink {
             visible_across_processes: false,
             delivery_confirmed: true,
             queryable: false,
+            may_block: false,
         }
     }
 }
@@ -305,6 +306,7 @@ impl TelemetryReader for HostileReader {
             visible_across_processes: true,
             delivery_confirmed: false,
             queryable: true,
+            may_block: false,
         }
     }
 }
@@ -320,6 +322,7 @@ impl TelemetrySink for FailingSink {
             visible_across_processes: false,
             delivery_confirmed: false,
             queryable: false,
+            may_block: false,
         }
     }
 }
@@ -450,9 +453,64 @@ fn ports_are_object_safe_and_arc_dyn_polymorphic() {
             durable_across_restart: true,
             visible_across_processes: false,
             delivery_confirmed: true,
-            queryable: true
+            queryable: true,
+            may_block: false,
         }
     );
+}
+
+/// A sink/reader pair used solely to prove the deliberate asymmetry in
+/// `TelemetryService::guarantees().may_block`: it mirrors the sink and
+/// ignores the reader, unlike `durable_across_restart`/
+/// `visible_across_processes`, which AND both sides.
+struct MayBlockSink(bool);
+impl TelemetrySink for MayBlockSink {
+    fn emit(&self, _: TelemetryEnvelopeV1) -> Result<(), ObservabilityError> {
+        Ok(())
+    }
+    fn guarantees(&self) -> TelemetryGuarantees {
+        TelemetryGuarantees {
+            durable_across_restart: false,
+            visible_across_processes: false,
+            delivery_confirmed: false,
+            queryable: false,
+            may_block: self.0,
+        }
+    }
+}
+struct MayBlockReader(bool);
+impl TelemetryReader for MayBlockReader {
+    fn query(
+        &self,
+        _: &TenantId,
+        _: &TelemetryQueryV1,
+    ) -> Result<Vec<TelemetryRecordV1>, ObservabilityError> {
+        Ok(vec![])
+    }
+    fn guarantees(&self) -> TelemetryGuarantees {
+        TelemetryGuarantees {
+            durable_across_restart: false,
+            visible_across_processes: false,
+            delivery_confirmed: false,
+            queryable: false,
+            may_block: self.0,
+        }
+    }
+}
+
+#[test]
+fn service_guarantees_may_block_mirrors_the_sink_and_ignores_a_differing_reader() {
+    let clock: Arc<dyn Clock> = Arc::new(FixedClock(Timestamp::from_unix_nanos(1)));
+
+    let blocking_sink_nonblocking_reader =
+        TelemetryService::new(MayBlockSink(true), MayBlockReader(false), clock.clone(), 1)
+            .expect("service");
+    assert!(blocking_sink_nonblocking_reader.guarantees().may_block);
+
+    let nonblocking_sink_blocking_reader =
+        TelemetryService::new(MayBlockSink(false), MayBlockReader(true), clock, 1)
+            .expect("service");
+    assert!(!nonblocking_sink_blocking_reader.guarantees().may_block);
 }
 
 fn sample_trace_context() -> TraceContextV1 {
@@ -709,6 +767,7 @@ impl SpanSink for CaptureSpanSink {
             visible_across_processes: false,
             delivery_confirmed: false,
             queryable: false,
+            may_block: false,
         }
     }
 }
@@ -726,6 +785,7 @@ impl MetricSink for CaptureMetricSink {
             visible_across_processes: false,
             delivery_confirmed: false,
             queryable: false,
+            may_block: false,
         }
     }
 }

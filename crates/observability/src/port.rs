@@ -7,6 +7,10 @@ use crate::{
 
 pub trait TelemetrySink: Send + Sync {
     fn emit(&self, envelope: TelemetryEnvelopeV1) -> Result<(), ObservabilityError>;
+
+    /// See [`TelemetryGuarantees::may_block`] for this method's obligation
+    /// regarding `emit`'s blocking behavior: report the conservative value
+    /// if it cannot be verified, never an optimistic guess.
     fn guarantees(&self) -> TelemetryGuarantees;
 }
 
@@ -16,6 +20,11 @@ pub trait TelemetryReader: Send + Sync {
         tenant_id: &TenantId,
         query: &TelemetryQueryV1,
     ) -> Result<Vec<TelemetryRecordV1>, ObservabilityError>;
+
+    /// [`TelemetryGuarantees::may_block`] describes the emit path only; a
+    /// reader's `guarantees()` result is not composed into it and this
+    /// method's own blocking behavior (e.g. for `query`) is out of scope
+    /// for that field.
     fn guarantees(&self) -> TelemetryGuarantees;
 }
 
@@ -30,6 +39,10 @@ pub trait Clock: Send + Sync {
 /// OTEL SDK/exporter, but the port surface stays additive and untangled.
 pub trait SpanSink: Send + Sync {
     fn emit(&self, envelope: SpanEnvelopeV1) -> Result<(), ObservabilityError>;
+
+    /// See [`TelemetryGuarantees::may_block`] for this method's obligation
+    /// regarding `emit`'s blocking behavior: report the conservative value
+    /// if it cannot be verified, never an optimistic guess.
     fn guarantees(&self) -> TelemetryGuarantees;
 }
 
@@ -38,6 +51,10 @@ pub trait SpanSink: Send + Sync {
 /// signal, not a discrete log or span.
 pub trait MetricSink: Send + Sync {
     fn emit(&self, envelope: MetricEnvelopeV1) -> Result<(), ObservabilityError>;
+
+    /// See [`TelemetryGuarantees::may_block`] for this method's obligation
+    /// regarding `emit`'s blocking behavior: report the conservative value
+    /// if it cannot be verified, never an optimistic guess.
     fn guarantees(&self) -> TelemetryGuarantees;
 }
 

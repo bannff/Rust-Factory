@@ -79,6 +79,14 @@ where
                 && reader.visible_across_processes,
             delivery_confirmed: sink.delivery_confirmed,
             queryable: reader.queryable,
+            // Deliberately mirrors the sink only, unlike the AND'd fields
+            // above: `may_block` is an emit-path-only concern (see
+            // `TelemetryGuarantees::may_block`), and `query()` carries no
+            // synchronous hot-path contract at stake here. Folding the
+            // reader's value in would either mask a blocking sink behind
+            // a non-blocking reader, or falsely flag an emit-safe sink as
+            // unsafe due to unrelated read-path behavior.
+            may_block: sink.may_block,
         }
     }
 }

@@ -184,7 +184,8 @@ fn disabled_events_are_not_created_or_emitted_and_guarantees_are_submit_only() {
             durable_across_restart: false,
             visible_across_processes: false,
             delivery_confirmed: false,
-            queryable: false
+            queryable: false,
+            may_block: true,
         }
     );
 }
@@ -402,7 +403,7 @@ mod metric_sink {
     }
 
     #[test]
-    fn guarantees_are_all_false() {
+    fn guarantees_are_all_false_except_the_unverifiable_may_block() {
         let (meter, _provider) = meter();
         let sink = OpenTelemetryMetricSink::new(meter);
         assert_eq!(
@@ -412,6 +413,7 @@ mod metric_sink {
                 visible_across_processes: false,
                 delivery_confirmed: false,
                 queryable: false,
+                may_block: true,
             }
         );
     }

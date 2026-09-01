@@ -207,6 +207,7 @@ where
             "visible_across_processes": guarantees.visible_across_processes,
             "delivery_confirmed": guarantees.delivery_confirmed,
             "queryable": guarantees.queryable,
+            "may_block": guarantees.may_block,
         }))
     }
 }
@@ -409,6 +410,7 @@ mod tests {
                 visible_across_processes: false,
                 delivery_confirmed: false,
                 queryable: true,
+                may_block: false,
             }
         }
     }
@@ -423,6 +425,7 @@ mod tests {
                 visible_across_processes: false,
                 delivery_confirmed: true,
                 queryable: false,
+                may_block: false,
             }
         }
     }
@@ -637,7 +640,7 @@ mod tests {
                 .expect("JSON");
         assert_eq!(
             status,
-            json!({"durable_across_restart":false,"visible_across_processes":false,"delivery_confirmed":true,"queryable":true})
+            json!({"durable_across_restart":false,"visible_across_processes":false,"delivery_confirmed":true,"queryable":true,"may_block":false})
         );
         assert!(reader.calls.lock().expect("reader").is_empty());
         assert_eq!(

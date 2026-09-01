@@ -62,6 +62,12 @@ where
             visible_across_processes: false,
             delivery_confirmed: false,
             queryable: false,
+            // This adapter wraps an injected `Logger`/`Meter` whose
+            // underlying I/O behavior is composition-root-owned and
+            // unobservable here (this brick SHALL NOT construct an SDK,
+            // exporter, or runtime). "Unknown" is not a safe substitute
+            // for "non-blocking", so this reports the conservative value.
+            may_block: true,
         }
     }
 }
@@ -201,6 +207,12 @@ impl crate::MetricSink for OpenTelemetryMetricSink {
             visible_across_processes: false,
             delivery_confirmed: false,
             queryable: false,
+            // This adapter wraps an injected `Logger`/`Meter` whose
+            // underlying I/O behavior is composition-root-owned and
+            // unobservable here (this brick SHALL NOT construct an SDK,
+            // exporter, or runtime). "Unknown" is not a safe substitute
+            // for "non-blocking", so this reports the conservative value.
+            may_block: true,
         }
     }
 }

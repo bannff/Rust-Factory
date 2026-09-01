@@ -56,7 +56,8 @@ fn constructor_capacity_and_truthful_guarantees_are_exact() {
             durable_across_restart: false,
             visible_across_processes: false,
             delivery_confirmed: true,
-            queryable: true
+            queryable: true,
+            may_block: false,
         }
     );
 }
