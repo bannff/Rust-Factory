@@ -6,6 +6,9 @@ pub enum PublicErrorCode {
     InvalidEvent,
     InvalidQuery,
     InvalidConfiguration,
+    InvalidTraceContext,
+    InvalidSpan,
+    InvalidMetric,
     LimitExceeded,
     OperationFailed,
 }
@@ -16,6 +19,9 @@ pub enum ObservabilityError {
     InvalidEvent,
     InvalidQuery,
     InvalidConfiguration,
+    InvalidTraceContext,
+    InvalidSpan,
+    InvalidMetric,
     LimitExceeded,
     AdapterFailure,
 }
@@ -27,6 +33,9 @@ impl ObservabilityError {
             Self::InvalidEvent => PublicErrorCode::InvalidEvent,
             Self::InvalidQuery => PublicErrorCode::InvalidQuery,
             Self::InvalidConfiguration => PublicErrorCode::InvalidConfiguration,
+            Self::InvalidTraceContext => PublicErrorCode::InvalidTraceContext,
+            Self::InvalidSpan => PublicErrorCode::InvalidSpan,
+            Self::InvalidMetric => PublicErrorCode::InvalidMetric,
             Self::LimitExceeded => PublicErrorCode::LimitExceeded,
             Self::AdapterFailure => PublicErrorCode::OperationFailed,
         }
