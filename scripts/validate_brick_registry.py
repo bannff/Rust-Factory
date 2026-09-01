@@ -37,7 +37,7 @@ BINARY_DIR = "projects"
 # structural placement rule — a scaffolded package must be a status-only core
 # under its canonical path — not a roadmap: the capability taxonomy lives in
 # GitHub, not here.
-STATUS_ONLY_FAMILIES = frozenset({"sandbox"})
+STATUS_ONLY_FAMILIES = frozenset()
 
 # Defensive ceiling on any single file this validator reads.
 MAX_READ_BYTES = 1 << 20
@@ -79,6 +79,7 @@ ADAPTER_MODULES = {
     "serdes_ai_evals": frozenset({"serdes_ai_evals"}),
     "biscuit_auth": frozenset({"biscuit"}),
     "prost": frozenset({"biscuit"}),
+    "subprocess": frozenset({"docker"}),
 }
 
 # Every module name a brick may feature gate. A superset of ADAPTER_MODULES'
@@ -97,6 +98,7 @@ ADAPTER_MODULES = {
 ADAPTER_MODULE_NAMES = frozenset(
     {
         "mcp",
+        "docker",
         "memory",
         "fs",
         "agentic",

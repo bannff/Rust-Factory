@@ -5,7 +5,7 @@
 # cores. The -features targets below are what cover the adapter code; without
 # them roughly half the workspace would go uncompiled, unlinted, and untested.
 
-BRICKS := agent auth evaluation knowledge llm-gateway memory observability policy project storage workflow
+BRICKS := agent auth evaluation knowledge llm-gateway memory observability policy project sandbox storage workflow
 
 fmt:
 	cargo fmt --all
@@ -44,6 +44,9 @@ lint-features:
 	cargo clippy -p policy --features memory --all-targets -- -D warnings
 	cargo clippy -p project --features fs --all-targets -- -D warnings
 	cargo clippy -p project --features mcp --all-targets -- -D warnings
+	cargo clippy -p sandbox --features docker --all-targets -- -D warnings
+	cargo clippy -p sandbox --features mcp --all-targets -- -D warnings
+	cargo clippy -p sandbox --features docker,mcp --all-targets -- -D warnings
 	cargo clippy -p storage --features local --all-targets -- -D warnings
 	cargo clippy -p storage --features redb --all-targets -- -D warnings
 	cargo clippy -p storage --features settings --all-targets -- -D warnings
@@ -81,6 +84,9 @@ test-features:
 	cargo test -p policy --features memory
 	cargo test -p project --features mcp,fs
 	cargo test -p project --features mcp
+	cargo test -p sandbox --features docker
+	cargo test -p sandbox --features mcp
+	cargo test -p sandbox --features docker,mcp
 	cargo test -p storage --features local
 	cargo test -p storage --features redb
 	cargo test -p storage --features settings
@@ -100,7 +106,7 @@ test-features:
 # graph in isolation, so it says nothing about artifacts: Cargo unifies features
 # per build graph, so a binary composing several bricks with `mcp` enabled links
 # one framework-carrying build of each.
-ADAPTER_DEPS := rmcp mcp-transport schemars@0.9.0 schemars@1.2.2 anyhow cap-std tokio genai reqwest futures agentic-memory redb opentelemetry serdes-ai-evals biscuit-auth prost
+ADAPTER_DEPS := rmcp mcp-transport schemars@0.9.0 schemars@1.2.2 anyhow cap-std tokio genai reqwest futures agentic-memory redb opentelemetry serdes-ai-evals biscuit-auth prost subprocess
 
 isolation-check:
 	@for dep in $(ADAPTER_DEPS); do \
