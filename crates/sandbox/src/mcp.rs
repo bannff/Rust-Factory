@@ -271,6 +271,13 @@ where
     }
 }
 
+// `#[tool_handler]` (rmcp) expands into `async fn` trait impl methods whose
+// bodies contain no `.await` (they resolve immediately via
+// `std::future::ready`-equivalent machinery). A newer Clippy version's
+// `unused_async_trait_impl` lint flags this macro-generated code; the
+// generated functions are not something this crate can rewrite directly.
+// Suppressed at the macro invocation site pending an rmcp upstream fix.
+#[allow(unknown_lints, clippy::unused_async_trait_impl)]
 #[tool_handler(router = self.tool_router)]
 impl<S, T, P> ServerHandler for SandboxMcp<S, T, P>
 where

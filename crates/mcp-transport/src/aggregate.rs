@@ -305,14 +305,15 @@ impl AggregateRouter {
 }
 
 impl ServerHandler for AggregateRouter {
-    async fn list_tools(
+    fn list_tools(
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::ListToolsResult, ErrorData> {
-        Ok(rmcp::model::ListToolsResult::with_all_items(
+    ) -> impl std::future::Future<Output = Result<rmcp::model::ListToolsResult, ErrorData>> + Send + '_
+    {
+        std::future::ready(Ok(rmcp::model::ListToolsResult::with_all_items(
             self.tools_cache.clone(),
-        ))
+        )))
     }
 
     async fn call_tool(
