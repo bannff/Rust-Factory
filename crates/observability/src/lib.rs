@@ -38,5 +38,5 @@ pub use propagation::{
 pub use service::TelemetryService;
 pub use validation::{
     record_matches, validate_envelope, validate_event, validate_metric, validate_query,
-    validate_record, validate_span, validate_trace_context,
+    validate_record, validate_span, validate_tenant_id, validate_trace_context,
 };
