@@ -12,6 +12,8 @@
 pub mod docker;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+#[cfg(feature = "observability")]
+pub mod observability;
 
 mod error;
 mod model;

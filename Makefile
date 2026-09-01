@@ -46,7 +46,9 @@ lint-features:
 	cargo clippy -p project --features mcp --all-targets -- -D warnings
 	cargo clippy -p sandbox --features docker --all-targets -- -D warnings
 	cargo clippy -p sandbox --features mcp --all-targets -- -D warnings
+	cargo clippy -p sandbox --features observability --all-targets -- -D warnings
 	cargo clippy -p sandbox --features docker,mcp --all-targets -- -D warnings
+	cargo clippy -p sandbox --features docker,mcp,observability --all-targets -- -D warnings
 	cargo clippy -p storage --features local --all-targets -- -D warnings
 	cargo clippy -p storage --features redb --all-targets -- -D warnings
 	cargo clippy -p storage --features settings --all-targets -- -D warnings
@@ -86,7 +88,9 @@ test-features:
 	cargo test -p project --features mcp
 	cargo test -p sandbox --features docker
 	cargo test -p sandbox --features mcp
+	cargo test -p sandbox --features observability
 	cargo test -p sandbox --features docker,mcp
+	cargo test -p sandbox --features docker,mcp,observability
 	cargo test -p storage --features local
 	cargo test -p storage --features redb
 	cargo test -p storage --features settings
