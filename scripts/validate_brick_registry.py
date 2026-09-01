@@ -110,6 +110,7 @@ ADAPTER_MODULE_NAMES = frozenset(
         "opentelemetry",
         "serdes_ai_evals",
         "biscuit",
+        "observability",
     }
 )
 VALID_STATUSES = {

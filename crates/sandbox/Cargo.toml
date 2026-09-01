@@ -16,10 +16,12 @@ status = "migration-pending"
 default = []
 docker = ["dep:sha2", "dep:subprocess"]
 mcp = ["dep:anyhow", "dep:mcp-contract", "dep:policy", "dep:rmcp", "dep:schemars", "dep:serde", "dep:serde_json"]
+observability = ["dep:observability"]
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
 mcp-contract = { path = "../mcp-contract", version = "=0.1.0", optional = true }
+observability = { path = "../observability", version = "=0.1.0", optional = true }
 policy = { path = "../policy", version = "=0.1.0", optional = true }
 rmcp = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
@@ -29,6 +31,7 @@ sha2 = { workspace = true, optional = true }
 subprocess = { workspace = true, optional = true }
 
 [dev-dependencies]
+observability = { path = "../observability", version = "=0.1.0", features = ["local"] }
 proptest.workspace = true
 serde_json.workspace = true
 
