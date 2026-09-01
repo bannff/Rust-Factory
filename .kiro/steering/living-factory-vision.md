@@ -68,7 +68,7 @@ Cache is separate, non-authoritative, and evictable: losing cached data must not
 
 CRDTs are suitable for explicitly selected, eventually consistent replicated data. Consequential effects still require independently derived identity, authorization, idempotency, acknowledgement, audit evidence, and coordination safeguards where necessary.
 
-Delivery is local-first. Stabilize and prove synchronous local typed contracts before remote, mesh, or CRDT adapters; those adapters remain opt-in boundary work behind core-owned traits and separately specified safety and recovery guarantees.
+Delivery is local-first. Stabilize and prove local typed contracts before remote, mesh, or CRDT adapters; those adapters remain opt-in boundary work behind core-owned traits and separately specified safety and recovery guarantees. "Local-first" governs the local-versus-remote/mesh sequencing of a capability, not in-process concurrency: within the local, non-mesh execution path, `agent`, `llm-gateway`, and `workflow` are async-first per the Rust Factory Delivery Workflow's decision rules, driven by Tokio at the composition root, while remaining independent of any remote or mesh transport.
 
 ## Brick anatomy and migration
 
