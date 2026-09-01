@@ -1,6 +1,10 @@
 #![allow(clippy::missing_errors_doc, clippy::needless_pass_by_value)]
 
 use anyhow::{Result, anyhow};
+use mcp_contract::{
+    DispatchError, DispatchFuture, DispatchOutcome, HandlerContribution, Namespace, ToolDescriptor,
+    ToolName,
+};
 use policy::{
     AuthorizationDecisionV1, AuthorizationRequestV1, CapabilityV1, PolicyResolver,
     TrustedContextV1, canonical_grant, decision_digest,
@@ -39,6 +43,7 @@ pub struct SandboxMcp<S, T, P> {
     sandbox: S,
     context: T,
     policy: P,
+    namespace: Namespace,
     tool_router: ToolRouter<Self>,
 }
 impl<S, T, P> SandboxMcp<S, T, P>
@@ -47,12 +52,19 @@ where
     T: TrustedContextSource + 'static,
     P: PolicyResolver + 'static,
 {
+    /// Creates a server with injected Docker/MCP-independent adapters.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice: the literal namespace `"sandbox"` always
+    /// satisfies [`Namespace::new`]'s closed grammar.
     #[must_use]
     pub fn new(sandbox: S, context: T, policy: P) -> Self {
         Self {
             sandbox,
             context,
             policy,
+            namespace: Namespace::new("sandbox").expect("literal namespace is valid"),
             tool_router: Self::tool_router(),
         }
     }
@@ -158,6 +170,28 @@ where
                 .map_err(public)?,
         )
     }
+    #[allow(
+        clippy::unused_self,
+        reason = "kept as &self for uniformity with the other *_json methods dispatch() calls"
+    )]
+    fn capabilities_json(&self, input: EmptyInput) -> Result<String> {
+        check_size(&input)?;
+        serialize(&json!({
+            "operations": ["start", "execute", "status", "stop"],
+            "durable": false, "retries": false, "recovery": false,
+        }))
+    }
+    #[allow(
+        clippy::unused_self,
+        reason = "kept as &self for uniformity with the other *_json methods dispatch() calls"
+    )]
+    fn schema_json(&self, input: EmptyInput) -> Result<String> {
+        check_size(&input)?;
+        serialize(&json!({
+            "requests": {"start": schema_for!(StartInput), "execute": schema_for!(ExecuteInput), "status": schema_for!(TargetInput), "stop": schema_for!(TargetInput)},
+            "responses": {"start": schema_for!(StartOutput), "execute": schema_for!(ExecuteOutput), "status": schema_for!(StatusOutput), "stop": schema_for!(StopOutput)},
+        }))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -224,22 +258,14 @@ where
         description = "Describe the minimal Sandbox operations and guarantees."
     )]
     async fn capabilities(&self, Parameters(input): Parameters<EmptyInput>) -> String {
-        tool_response(check_size(&input).and_then(|()| {
-            serialize(&json!({
-                "operations": ["start", "execute", "status", "stop"],
-                "durable": false, "retries": false, "recovery": false,
-            }))
-        }))
+        tool_response(self.capabilities_json(input))
     }
     #[tool(
         name = "sandbox_schema",
         description = "Return generated closed request and response schemas."
     )]
     async fn schema(&self, Parameters(input): Parameters<EmptyInput>) -> String {
-        tool_response(check_size(&input).and_then(|()| serialize(&json!({
-            "requests": {"start": schema_for!(StartInput), "execute": schema_for!(ExecuteInput), "status": schema_for!(TargetInput), "stop": schema_for!(TargetInput)},
-            "responses": {"start": schema_for!(StartOutput), "execute": schema_for!(ExecuteOutput), "status": schema_for!(StatusOutput), "stop": schema_for!(StopOutput)},
-        }))))
+        tool_response(self.schema_json(input))
     }
     #[tool(
         name = "sandbox_start",
@@ -285,6 +311,146 @@ where
     T: TrustedContextSource + 'static,
     P: PolicyResolver + 'static,
 {
+}
+
+/// This contribution declares its full six-tool public surface with no
+/// exclusions. Unlike `project`'s `HandlerContribution` migration, which
+/// deliberately excludes `project_generate` pending a `TrustedContextSource`/
+/// `PolicyResolver` authorization gate, every one of Sandbox's four
+/// effectful tools already authorizes via [`SandboxMcp::authorize`] before
+/// any effect on the standalone `ServerHandler` path, and `dispatch` below
+/// reuses the exact same `*_json` methods that path calls — so there is no
+/// analogous gap to gate around.
+impl<S, T, P> HandlerContribution for SandboxMcp<S, T, P>
+where
+    S: Sandbox + 'static,
+    T: TrustedContextSource + 'static,
+    P: PolicyResolver + 'static,
+{
+    fn namespace(&self) -> &Namespace {
+        &self.namespace
+    }
+
+    fn tools(&self) -> Vec<ToolDescriptor> {
+        let namespace = &self.namespace;
+        vec![
+            descriptor(
+                namespace,
+                "start",
+                "Start one trusted ephemeral sandbox profile.",
+                schema_map::<StartInput>(),
+            ),
+            descriptor(
+                namespace,
+                "execute",
+                "Execute one bounded command in an owned sandbox.",
+                schema_map::<ExecuteInput>(),
+            ),
+            descriptor(
+                namespace,
+                "status",
+                "Read one owned sandbox status.",
+                schema_map::<TargetInput>(),
+            ),
+            descriptor(
+                namespace,
+                "stop",
+                "Stop and remove one owned sandbox.",
+                schema_map::<TargetInput>(),
+            ),
+            descriptor(
+                namespace,
+                "capabilities",
+                "Describe the minimal Sandbox operations and guarantees.",
+                schema_map::<EmptyInput>(),
+            ),
+            descriptor(
+                namespace,
+                "schema",
+                "Return generated closed request and response schemas.",
+                schema_map::<EmptyInput>(),
+            ),
+        ]
+    }
+
+    fn dispatch(&self, tool: ToolName, arguments: serde_json::Value) -> DispatchFuture<'_> {
+        Box::pin(async move {
+            match tool.as_str() {
+                "sandbox_start" => {
+                    let input = deserialize_arguments(arguments)?;
+                    Ok(fold_outcome(self.start_json(input)))
+                }
+                "sandbox_execute" => {
+                    let input = deserialize_arguments(arguments)?;
+                    Ok(fold_outcome(self.execute_json(input)))
+                }
+                "sandbox_status" => {
+                    let input = deserialize_arguments(arguments)?;
+                    Ok(fold_outcome(self.status_json(input)))
+                }
+                "sandbox_stop" => {
+                    let input = deserialize_arguments(arguments)?;
+                    Ok(fold_outcome(self.stop_json(input)))
+                }
+                "sandbox_capabilities" => {
+                    let input = deserialize_arguments(arguments)?;
+                    Ok(fold_outcome(self.capabilities_json(input)))
+                }
+                "sandbox_schema" => {
+                    let input = deserialize_arguments(arguments)?;
+                    Ok(fold_outcome(self.schema_json(input)))
+                }
+                _ => Err(DispatchError::UnknownTool),
+            }
+        })
+    }
+}
+
+fn schema_map<V: JsonSchema>() -> serde_json::Map<String, serde_json::Value> {
+    serde_json::to_value(schema_for!(V))
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn descriptor(
+    namespace: &Namespace,
+    operation: &str,
+    description: &str,
+    schema: serde_json::Map<String, serde_json::Value>,
+) -> ToolDescriptor {
+    ToolDescriptor {
+        name: ToolName::new(namespace, operation).expect("operation is a valid closed segment"),
+        title: None,
+        description: description.to_owned(),
+        input_schema: schema,
+        output_schema: None,
+    }
+}
+
+fn deserialize_arguments<V: serde::de::DeserializeOwned>(
+    arguments: serde_json::Value,
+) -> std::result::Result<V, DispatchError> {
+    serde_json::from_value(arguments)
+        .map_err(|_| DispatchError::MalformedArguments("could not parse tool arguments".to_owned()))
+}
+
+/// Reuses [`tool_response`]'s exact safe-code allowlist so the granular
+/// redacted error taxonomy already proven by `public_errors_are_redacted`
+/// and the authorization-ordering tests is identical between the standalone
+/// `ServerHandler` path and this `HandlerContribution` path. This
+/// deliberately does not collapse every failure to one fallback code the way
+/// `project`'s `fold_outcome` does, since `project`'s standalone
+/// `tool_response` distinguishes only success from `"generation_failed"`,
+/// while Sandbox's already distinguishes `denied`/`limit_exceeded`/
+/// `timeout`/`not_found`/`invalid_request`/`outcome_unknown` as safe codes.
+fn fold_outcome(result: Result<String>) -> DispatchOutcome {
+    let projected = tool_response(result);
+    DispatchOutcome {
+        payload: serde_json::from_str(&projected)
+            .unwrap_or_else(|_| json!({ "error": "operation_failed" })),
+        is_error: false,
+    }
 }
 
 fn status(value: SandboxStatus) -> &'static str {
@@ -538,5 +704,412 @@ mod tests {
                 "sandbox_stop"
             ]
         );
+    }
+
+    struct AllowContext;
+    impl TrustedContextSource for AllowContext {
+        fn resolve(&self) -> Result<policy::TrustedContextV1, SandboxError> {
+            Ok(policy::TrustedContextV1 {
+                tenant_id: policy::TenantId::new("tenant").unwrap(),
+                principal_id: policy::PrincipalId::new("principal").unwrap(),
+                request_id: policy::RequestId::new("request").unwrap(),
+                correlation_id: policy::CorrelationId::new("correlation").unwrap(),
+            })
+        }
+    }
+    struct AllowPolicy;
+    impl PolicyResolver for AllowPolicy {
+        fn authorize(&self, request: AuthorizationRequestV1) -> AuthorizationDecisionV1 {
+            let grant =
+                policy::GrantV1::new(Vec::<String>::new(), false, false, true, false).unwrap();
+            let digest = decision_digest(
+                &request,
+                &AuthorizationDecisionV1::Allow {
+                    effective_grant: grant.clone(),
+                    decision_digest: String::new(),
+                },
+            )
+            .unwrap();
+            AuthorizationDecisionV1::Allow {
+                effective_grant: grant,
+                decision_digest: digest,
+            }
+        }
+    }
+    struct StubSandbox;
+    impl Sandbox for StubSandbox {
+        fn start(&self, _: StartRequest) -> std::result::Result<StartResult, SandboxError> {
+            Ok(StartResult {
+                sandbox_id: SandboxId::new(format!("sbx-{}", "a".repeat(32))).unwrap(),
+                status: SandboxStatus::Running,
+            })
+        }
+        fn execute(&self, _: ExecuteRequest) -> std::result::Result<ExecuteResult, SandboxError> {
+            unreachable!("not exercised by this test")
+        }
+        fn status(
+            &self,
+            request: TargetRequest,
+        ) -> std::result::Result<StatusResult, SandboxError> {
+            Ok(StatusResult {
+                sandbox_id: request.sandbox_id,
+                status: SandboxStatus::Running,
+            })
+        }
+        fn stop(&self, _: TargetRequest) -> std::result::Result<StopResult, SandboxError> {
+            unreachable!("not exercised by this test")
+        }
+    }
+
+    #[test]
+    fn handler_contribution_namespace_is_sandbox() {
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        assert_eq!(HandlerContribution::namespace(&mcp).as_str(), "sandbox");
+    }
+
+    #[test]
+    fn handler_contribution_tools_are_the_full_six_with_no_exclusions() {
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        let mut names: Vec<String> = HandlerContribution::tools(&mcp)
+            .into_iter()
+            .map(|tool| tool.name.as_str().to_owned())
+            .collect();
+        names.sort();
+        let mut expected: Vec<String> = SANDBOX_TOOLS.iter().map(|&name| name.to_owned()).collect();
+        expected.sort();
+        assert_eq!(
+            names, expected,
+            "HandlerContribution::tools() must declare every SANDBOX_TOOLS entry with no exclusions, \
+             unlike project's project_generate exclusion"
+        );
+    }
+
+    #[test]
+    fn handler_contribution_dispatch_rejects_unknown_fields() {
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        let namespace = Namespace::new("sandbox").unwrap();
+        let tool = ToolName::new(&namespace, "status").unwrap();
+        let arguments = json!({"sandbox_id": format!("sbx-{}", "a".repeat(32)), "extra": true});
+        let error = futures_executor_block(mcp.dispatch(tool, arguments))
+            .expect_err("unknown field must be rejected before dispatch succeeds");
+        assert!(matches!(error, DispatchError::MalformedArguments(_)));
+    }
+
+    #[test]
+    fn handler_contribution_dispatch_rejects_unknown_tool() {
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        let namespace = Namespace::new("sandbox").unwrap();
+        let tool = ToolName::new(&namespace, "does_not_exist").unwrap();
+        let error = futures_executor_block(mcp.dispatch(tool, json!({})))
+            .expect_err("unknown tool must be rejected");
+        assert_eq!(error, DispatchError::UnknownTool);
+    }
+
+    #[test]
+    fn handler_contribution_dispatch_status_matches_standalone_tool_response() {
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        let namespace = Namespace::new("sandbox").unwrap();
+        let tool = ToolName::new(&namespace, "status").unwrap();
+        let sandbox_id = format!("sbx-{}", "a".repeat(32));
+        let arguments = json!({"sandbox_id": sandbox_id});
+
+        let standalone = mcp
+            .status_json(TargetInput {
+                sandbox_id: sandbox_id.clone(),
+            })
+            .expect("standalone status_json succeeds");
+        let standalone_value: serde_json::Value =
+            serde_json::from_str(&standalone).expect("standalone output is JSON");
+
+        let outcome =
+            futures_executor_block(mcp.dispatch(tool, arguments)).expect("dispatch succeeds");
+        assert!(!outcome.is_error);
+        assert_eq!(
+            outcome.payload, standalone_value,
+            "HandlerContribution::dispatch must reuse the same *_json method as the standalone tool"
+        );
+    }
+
+    #[test]
+    fn handler_contribution_dispatch_capabilities_and_schema_are_bounded_and_safe() {
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        let namespace = Namespace::new("sandbox").unwrap();
+
+        let capabilities_tool = ToolName::new(&namespace, "capabilities").unwrap();
+        let capabilities = futures_executor_block(mcp.dispatch(capabilities_tool, json!({})))
+            .expect("capabilities dispatch succeeds");
+        assert!(!capabilities.is_error);
+        assert_eq!(capabilities.payload["operations"][0], "start");
+
+        let schema_tool = ToolName::new(&namespace, "schema").unwrap();
+        let schema = futures_executor_block(mcp.dispatch(schema_tool, json!({})))
+            .expect("schema dispatch succeeds");
+        assert!(!schema.is_error);
+        assert!(schema.payload["requests"]["start"].is_object());
+    }
+
+    #[test]
+    fn handler_contribution_dispatch_preserves_granular_redacted_error_taxonomy() {
+        // A malformed sandbox_id must surface the same safe "invalid_request"
+        // code on the unified dispatch path as it does on the standalone
+        // ServerHandler path, rather than collapsing to a coarser fallback.
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        let namespace = Namespace::new("sandbox").unwrap();
+        let tool = ToolName::new(&namespace, "status").unwrap();
+        let arguments = json!({"sandbox_id": "not-a-valid-id"});
+
+        let outcome = futures_executor_block(mcp.dispatch(tool, arguments))
+            .expect("dispatch itself succeeds; the failure is tool-level");
+        assert_eq!(outcome.payload["error"], "invalid_request");
+    }
+
+    /// Polls a `DispatchFuture` to completion without pulling in an async
+    /// test runtime dependency; every dispatch path exercised by these tests
+    /// resolves immediately (no adapter here performs real async I/O).
+    fn futures_executor_block<F: std::future::Future>(future: F) -> F::Output {
+        let mut future = Box::pin(future);
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        loop {
+            if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut context) {
+                return value;
+            }
+        }
+    }
+
+    /// A `Sandbox` stub that returns real, non-panicking success values for
+    /// all four effectful operations. `StubSandbox` above only implements
+    /// `start`/`status` (the other two `unreachable!()`), which is
+    /// insufficient to prove dispatch-vs-standalone parity for
+    /// `execute`/`stop`.
+    struct FullStubSandbox;
+    impl Sandbox for FullStubSandbox {
+        fn start(&self, _: StartRequest) -> std::result::Result<StartResult, SandboxError> {
+            Ok(StartResult {
+                sandbox_id: SandboxId::new(format!("sbx-{}", "b".repeat(32))).unwrap(),
+                status: SandboxStatus::Running,
+            })
+        }
+        fn execute(
+            &self,
+            request: ExecuteRequest,
+        ) -> std::result::Result<ExecuteResult, SandboxError> {
+            Ok(ExecuteResult {
+                sandbox_id: request.sandbox_id,
+                exit_code: 0,
+                stdout: "ok".into(),
+                stderr: String::new(),
+                truncated: false,
+            })
+        }
+        fn status(
+            &self,
+            request: TargetRequest,
+        ) -> std::result::Result<StatusResult, SandboxError> {
+            Ok(StatusResult {
+                sandbox_id: request.sandbox_id,
+                status: SandboxStatus::Running,
+            })
+        }
+        fn stop(&self, request: TargetRequest) -> std::result::Result<StopResult, SandboxError> {
+            Ok(StopResult {
+                sandbox_id: request.sandbox_id,
+                removed: true,
+            })
+        }
+    }
+
+    /// Regression for adversarial finding: only `status` had a
+    /// dispatch-vs-standalone parity test, and only `status`/`capabilities`/
+    /// `schema` were proven genuinely dispatchable (not silently returning
+    /// `UnknownTool`). This proves all three remaining effectful tools
+    /// (`start`, `execute`, `stop`) are dispatchable and byte-for-byte
+    /// identical to their standalone `*_json` output.
+    #[test]
+    fn handler_contribution_dispatch_start_execute_stop_match_standalone_and_are_reachable() {
+        let mcp = SandboxMcp::new(FullStubSandbox, AllowContext, AllowPolicy);
+        let namespace = Namespace::new("sandbox").unwrap();
+
+        let start_input = StartInput {
+            profile: "rust".into(),
+        };
+        let standalone: serde_json::Value =
+            serde_json::from_str(&mcp.start_json(start_input.clone()).unwrap()).unwrap();
+        let tool = ToolName::new(&namespace, "start").unwrap();
+        let arguments = serde_json::to_value(&start_input).unwrap();
+        let outcome = futures_executor_block(mcp.dispatch(tool, arguments))
+            .expect("sandbox_start must be genuinely dispatchable, not UnknownTool");
+        assert!(!outcome.is_error);
+        assert_eq!(outcome.payload, standalone);
+
+        let execute_input = ExecuteInput {
+            sandbox_id: format!("sbx-{}", "b".repeat(32)),
+            program: "cargo".into(),
+            arguments: vec!["test".into()],
+            working_directory: String::new(),
+            timeout_millis: 1_000,
+        };
+        let standalone: serde_json::Value =
+            serde_json::from_str(&mcp.execute_json(execute_input.clone()).unwrap()).unwrap();
+        let tool = ToolName::new(&namespace, "execute").unwrap();
+        let arguments = serde_json::to_value(&execute_input).unwrap();
+        let outcome = futures_executor_block(mcp.dispatch(tool, arguments))
+            .expect("sandbox_execute must be genuinely dispatchable, not UnknownTool");
+        assert!(!outcome.is_error);
+        assert_eq!(outcome.payload, standalone);
+
+        let stop_input = TargetInput {
+            sandbox_id: format!("sbx-{}", "b".repeat(32)),
+        };
+        let standalone: serde_json::Value =
+            serde_json::from_str(&mcp.stop_json(stop_input.clone()).unwrap()).unwrap();
+        let tool = ToolName::new(&namespace, "stop").unwrap();
+        let arguments = serde_json::to_value(&stop_input).unwrap();
+        let outcome = futures_executor_block(mcp.dispatch(tool, arguments))
+            .expect("sandbox_stop must be genuinely dispatchable, not UnknownTool");
+        assert!(!outcome.is_error);
+        assert_eq!(outcome.payload, standalone);
+    }
+
+    /// Regression for adversarial finding: the only existing
+    /// authorization-ordering-through-`dispatch()` proof used `status`
+    /// (`handler_contribution_dispatch_preserves_granular_redacted_error_taxonomy`),
+    /// and no test proved that an oversized DTO on the *effectful* `start`
+    /// path short-circuits before `authorize()`/the port is ever reached
+    /// when driven through `dispatch()` rather than the private method
+    /// directly.
+    #[test]
+    fn handler_contribution_dispatch_rejects_oversized_start_before_authorization() {
+        struct DenyContext;
+        impl TrustedContextSource for DenyContext {
+            fn resolve(&self) -> Result<policy::TrustedContextV1, SandboxError> {
+                panic!("must not be reached: size check must short-circuit first")
+            }
+        }
+        struct DenyPolicy;
+        impl PolicyResolver for DenyPolicy {
+            fn authorize(&self, _: AuthorizationRequestV1) -> AuthorizationDecisionV1 {
+                panic!("must not be reached: size check must short-circuit first")
+            }
+        }
+        struct DenySandboxAdapter;
+        impl Sandbox for DenySandboxAdapter {
+            fn start(&self, _: StartRequest) -> std::result::Result<StartResult, SandboxError> {
+                unreachable!()
+            }
+            fn execute(
+                &self,
+                _: ExecuteRequest,
+            ) -> std::result::Result<ExecuteResult, SandboxError> {
+                unreachable!()
+            }
+            fn status(&self, _: TargetRequest) -> std::result::Result<StatusResult, SandboxError> {
+                unreachable!()
+            }
+            fn stop(&self, _: TargetRequest) -> std::result::Result<StopResult, SandboxError> {
+                unreachable!()
+            }
+        }
+        let mcp = SandboxMcp::new(DenySandboxAdapter, DenyContext, DenyPolicy);
+        let namespace = Namespace::new("sandbox").unwrap();
+        let tool = ToolName::new(&namespace, "start").unwrap();
+        let oversized = StartInput {
+            profile: "x".repeat(MAX_DTO_BYTES + 1),
+        };
+        let arguments = serde_json::to_value(&oversized).unwrap();
+        let outcome = futures_executor_block(mcp.dispatch(tool, arguments))
+            .expect("dispatch itself succeeds; the oversized DTO is a tool-level failure");
+        assert_eq!(
+            outcome.payload["error"], "limit_exceeded",
+            "oversized DTO must be rejected by check_size before DenyContext/DenyPolicy/DenySandboxAdapter are ever touched"
+        );
+    }
+
+    /// A `Sandbox` stub whose every operation fails with the same
+    /// caller-configured `SandboxError`, used to prove `dispatch()`
+    /// preserves each of `tool_response`'s safe codes, not just
+    /// `invalid_request` (the only variant the pre-existing
+    /// `handler_contribution_dispatch_preserves_granular_redacted_error_taxonomy`
+    /// test covered).
+    struct ErrorSandbox(SandboxError);
+    impl Sandbox for ErrorSandbox {
+        fn start(&self, _: StartRequest) -> std::result::Result<StartResult, SandboxError> {
+            Err(self.0)
+        }
+        fn execute(&self, _: ExecuteRequest) -> std::result::Result<ExecuteResult, SandboxError> {
+            Err(self.0)
+        }
+        fn status(&self, _: TargetRequest) -> std::result::Result<StatusResult, SandboxError> {
+            Err(self.0)
+        }
+        fn stop(&self, _: TargetRequest) -> std::result::Result<StopResult, SandboxError> {
+            Err(self.0)
+        }
+    }
+
+    #[test]
+    fn handler_contribution_dispatch_preserves_full_error_taxonomy() {
+        let namespace = Namespace::new("sandbox").unwrap();
+        for (error, expected_code) in [
+            (SandboxError::NotFound, "not_found"),
+            (SandboxError::Denied, "denied"),
+            (SandboxError::LimitExceeded, "limit_exceeded"),
+            (SandboxError::Timeout, "timeout"),
+            (SandboxError::Unavailable, "unavailable"),
+            (SandboxError::OutcomeUnknown, "outcome_unknown"),
+            (SandboxError::OperationFailed, "operation_failed"),
+        ] {
+            let mcp = SandboxMcp::new(ErrorSandbox(error), AllowContext, AllowPolicy);
+            let tool = ToolName::new(&namespace, "status").unwrap();
+            let arguments = json!({"sandbox_id": format!("sbx-{}", "a".repeat(32))});
+            let outcome = futures_executor_block(mcp.dispatch(tool, arguments))
+                .expect("dispatch succeeds; the port failure is a tool-level outcome");
+            assert_eq!(
+                outcome.payload["error"], expected_code,
+                "SandboxError::{error:?} must surface as {expected_code:?} through dispatch(), \
+                 identical to the standalone tool_response path"
+            );
+        }
+    }
+
+    /// Regression for adversarial finding: nothing proved the
+    /// `schema_map::<V>()` used by `HandlerContribution::tools()`'s
+    /// `input_schema` actually matches the `schema_for!(V)` the standalone
+    /// `sandbox_schema` tool embeds. A drift here (e.g. one path adding a
+    /// field the other lacks) would silently desynchronize what an agent
+    /// discovers via `tools()` from what it gets calling `sandbox_schema`.
+    #[test]
+    fn handler_contribution_tools_input_schema_matches_standalone_schema_generation() {
+        let mcp = SandboxMcp::new(StubSandbox, AllowContext, AllowPolicy);
+        let tools = HandlerContribution::tools(&mcp);
+
+        let start_descriptor = tools
+            .iter()
+            .find(|tool| tool.name.as_str() == "sandbox_start")
+            .expect("sandbox_start must be declared");
+        let expected_start = serde_json::to_value(schema_for!(StartInput)).unwrap();
+        assert_eq!(
+            &start_descriptor.input_schema,
+            expected_start.as_object().unwrap()
+        );
+
+        let standalone_schema: serde_json::Value =
+            serde_json::from_str(&mcp.schema_json(EmptyInput {}).unwrap()).unwrap();
+        assert_eq!(
+            standalone_schema["requests"]["start"], expected_start,
+            "tools()'s schema_map::<StartInput>() must not drift from schema_for!(StartInput) \
+             embedded in the standalone sandbox_schema tool"
+        );
+
+        let target_descriptor = tools
+            .iter()
+            .find(|tool| tool.name.as_str() == "sandbox_status")
+            .expect("sandbox_status must be declared");
+        let expected_target = serde_json::to_value(schema_for!(TargetInput)).unwrap();
+        assert_eq!(
+            &target_descriptor.input_schema,
+            expected_target.as_object().unwrap()
+        );
+        assert_eq!(standalone_schema["requests"]["status"], expected_target);
     }
 }

@@ -2560,6 +2560,7 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mcp-contract",
  "policy",
  "proptest",
  "rmcp",
