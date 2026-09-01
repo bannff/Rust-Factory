@@ -15,7 +15,7 @@ status = "implemented"
 [features]
 local = []
 settings = ["dep:schemars", "dep:serde"]
-opentelemetry = ["dep:opentelemetry"]
+opentelemetry = ["dep:opentelemetry"] # gains metrics via the workspace-pinned feature list; span export is out of scope, see spec §7b
 mcp = ["dep:anyhow", "dep:policy", "dep:rmcp", "dep:schemars", "dep:serde", "dep:serde_json"]
 
 [dependencies]

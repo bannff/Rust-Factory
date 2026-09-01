@@ -31,7 +31,7 @@ anyhow = "=1.0.100"
 biscuit-auth = { version = "=6.0.0", default-features = false }
 cap-std = "=4.0.3"
 genai = { version = "=0.6.0", default-features = false }
-opentelemetry = { version = "=0.32.0", default-features = false, features = ["logs"] }
+opentelemetry = { version = "=0.32.0", default-features = false, features = ["logs", "metrics"] }
 rmcp = { version = "=3.1.4", features = ["macros", "server", "transport-io"] }
 proptest = "=1.6.0"
 redb = { version = "=2.6.3", default-features = false }
