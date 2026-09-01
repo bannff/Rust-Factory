@@ -5,37 +5,47 @@ inclusion: always
 
 ## North star
 
-Rust Factory is a domain-agnostic, agent-operated factory for authoring, validating, deploying, and evolving reliable Rust projects and autonomous agents. An agent must be able to discover, compose, and drive bounded Factory capabilities through MCP, while deployed systems remain portable, efficient, and safe Rust programs. Polymorphic code and tools, driven by data and config - leveraging heavy on serde/schemars + pop to keep data crisp and clean.
+Rust Factory is a domain-agnostic, agent-operated factory for authoring, validating, deploying, and evolving reliable Rust projects and autonomous agents. Agents discover, compose, and drive bounded Factory capabilities through MCP while deployed systems remain portable, efficient, and safe Rust programs.
 
-> MCP controls (polymorphic - leveraging progressive discovery) and composes capabilities; Rust executes them locally; mesh protocols coordinate deployed peers.
+> MCP controls and composes capabilities; Rust executes them locally; mesh protocols coordinate deployed peers.
 
 This document is a living architectural north star. Update it as validated implementation evidence changes the design.
 
-## One capability, multiple surfaces
+## One capability, mandatory agent surface
 
-A brick has a transport-independent Rust core and may expose several adapters:
+Every mature capability brick has a transport-independent Rust core, an always-available typed Rust API, and a mandatory feature-gated MCP handler:
 
 ```text
 one brick crate
-  ├── mcp module        agent authoring and operational control   (feature)
-  ├── typed Rust API    embedded or local Rust callers            (always)
-  └── mesh adapter      offline and peer-to-peer coordination     (separate crate)
+  ├── typed Rust API    embedded and local callers                 (always)
+  ├── mcp handler       bounded agent control-plane contribution   (feature)
+  └── mesh adapter      offline and peer coordination              (separate crate)
 ```
 
-The core owns typed domain models, rules, validation, and stable traits. Adapters own MCP, storage, model-provider, network, and framework details. Dependencies flow inward: adapters depend on core; core never depends on adapters.
+The core owns typed domain models, rules, validation, and stable traits. Adapters own MCP, storage, provider, network, and framework details. Dependencies flow inward.
 
-MCP is the Factory control plane, not the universal runtime API. Every brick SHOULD provide a bounded MCP surface for discovery and agent operation, but embedded applications SHOULD invoke the typed Rust API directly. Mesh communication SHOULD use a protocol selected for peer discovery, latency, offline operation, and device constraints—not an MCP round trip.
+Each MCP handler is transport-agnostic and self-describing. It SHALL expose generated, bounded `<namespace>_capabilities` and `<namespace>_schema` tools even when the safe operational surface is introspection-only. Sensitive bricks such as Policy, Auth, Storage, Knowledge, and LLM Gateway SHALL NOT expose privilege or raw-bypass operations: no caller-supplied authorization decisions, grant mutation, token minting, raw object CRUD, unrestricted corpus access, or unrestricted provider invocation.
+
+MCP is the Factory control plane, not the in-process runtime API. Embedded callers and project orchestration use typed Rust APIs and consumed ports; they never round-trip through MCP. Mesh communication uses a protocol selected for peer discovery, latency, offline operation, and device constraints—not MCP.
 
 ## Composition and deployment topology
 
-MCP adapters are libraries. A thin binary composition root owns process topology: Tokio startup, transport binding, configuration, host-derived trusted context, Policy resolver construction, concrete adapter injection, and orderly shutdown. Cores and MCP libraries do not choose a process topology.
+Every deployable project has exactly one binary target, process, and unified MCP server/router over `BoundedStdioTransport`. The composition root statically combines selected brick `HandlerContribution`s and separately typed `factory_*` project meta-tools behind one validation, budget, discovery, and dispatch contract. There are no per-brick server processes or dynamic handler discovery.
 
-A consuming core calls another capability through the consumed capability's typed port. Local and edge composition inject direct Rust implementations. A remote client is an opt-in adapter that implements that same consumed port only after a dedicated process-boundary specification proves trusted context is independently derived at the receiver and defines authorization, request/result ceilings, idempotency, deadline/cancellation propagation, evidence, and honest recovery guarantees. MCP client calls are never hardcoded in core orchestration.
+The binary owns runtime startup, transport binding, aggregate ingress/egress and discovery ceilings, duplicate-name rejection, configuration, host-derived trusted context, Policy construction, concrete adapter injection, admission/cancellation, and orderly shutdown. Brick handlers own no process topology.
+
+Namespaces SHALL match `[a-z][a-z0-9_]{0,63}`; crate hyphens normalize to underscores. Brick tools use `<namespace>_<operation>`, while project meta-tools exclusively use `factory_<operation>`. Startup fails closed on invalid or duplicate namespaces/tool names and aggregate schema/discovery budget violations.
+
+Before every write, `BoundedStdioTransport` SHALL serialize and measure the complete `TxJsonRpcMessage`, including the caller-controlled JSON-RPC request ID. It SHALL fail closed without a partial write when the envelope exceeds 64 KiB. Smaller handler-result limits provide headroom only; they do not prove the wire bound.
+
+Every non-introspection brick tool and project meta-tool SHALL receive host-derived trusted context and exact Policy authorization immediately before any effect or tenant-scoped read. Caller input never establishes identity, grants, trusted context, ceilings, or host paths. Introspection remains bounded and projects no grants, tokens, paths, corpus/provider data, or backend secrets.
+
+A remote client is an opt-in adapter only after a process-boundary specification proves independently derived receiver context, authorization, ceilings, idempotency, deadline/cancellation propagation, evidence, and honest recovery guarantees.
 
 ## Three planes
 
 1. **Authoring plane — MCP.** Agents discover bricks and use bounded tools to create projects, configure agents, retrieve steering/skills/knowledge, operate workflows, and inspect evaluation evidence.
-2. **Execution plane — native Rust.** A deployed agent uses Agent-owned typed ports such as `DefinitionStore`, `ToolRegistry`, `MemoryStore`, and `Sandbox`; consumes the LLM Gateway-owned `LlmProvider`; and consumes the Knowledge-owned synchronous `KnowledgeIndex` through `KnowledgeService`. Agent retains knowledge policy, planning, capability preflight, event projection, and output accounting. Knowledge has no MCP surface and Workflow has no Knowledge dependency. Concrete implementations remain replaceable adapters. A `MessageBus` port is intended but does not exist; see the capability taxonomy tracked in GitHub (issues #9 and #11).
+2. **Execution plane — native Rust.** Deployed code composes direct typed ports. Agent retains planning, policy, capability preflight, event projection, and output accounting; provider and knowledge capabilities remain replaceable injected adapters.
 3. **Mesh/data plane — native peer protocol.** Deployed peers discover, communicate, and replicate explicitly selected data while remaining capable of offline operation and recovery.
 
 ## Agentic control-plane ownership
@@ -50,45 +60,27 @@ Agent definitions are data: identity, model policy, instructions, skills, steeri
 
 ## Storage and Cache
 
-Storage is the authoritative versioned-object capability approved by issue #28. It owns bounded tenant- and namespace-scoped opaque object semantics; provider-specific database code is an adapter inside Storage. Capability-specific serialization, indexes, aggregate transitions, queries, and domain semantics remain owned by the capability whose data they describe rather than moving into Storage.
+Storage owns bounded tenant- and namespace-scoped opaque versioned-object semantics; provider-specific database code is an adapter inside Storage. Capability-specific serialization, indexes, aggregate transitions, queries, and domain semantics remain with the owning capability. Its mandatory MCP migration may begin introspection-only and SHALL NOT expose raw object CRUD.
 
-Cache is a separate, non-authoritative and evictable capability: losing cached data must not invalidate authoritative state. Its contract and package remain deferred and are not implied by approval of Storage.
+Cache is separate, non-authoritative, and evictable: losing cached data must not invalidate authoritative state. Its contract and package remain deferred.
 
 ## Mesh and CRDT safety
 
-CRDTs are suitable for explicitly selected, eventually consistent replicated data. They do not make consequential effects safe: operations that spend resources, change authority, publish externally, or otherwise create irreversible outcomes require independently derived identity, authorization, idempotency, acknowledgement, and audit evidence, plus lease, quorum, or leader safeguards where coordination is necessary.
+CRDTs are suitable for explicitly selected, eventually consistent replicated data. Consequential effects still require independently derived identity, authorization, idempotency, acknowledgement, audit evidence, and coordination safeguards where necessary.
 
-Delivery is local-first. Stabilize and prove the synchronous local typed contract before introducing remote, mesh, or CRDT adapters; those adapters remain opt-in boundary work behind core-owned traits and separately specified safety and recovery guarantees.
+Delivery is local-first. Stabilize and prove synchronous local typed contracts before remote, mesh, or CRDT adapters; those adapters remain opt-in boundary work behind core-owned traits and separately specified safety and recovery guarantees.
 
-## Brick anatomy
-
-A mature brick may be split into:
+## Brick anatomy and migration
 
 ```text
-crates/
-  <brick>/src/
-    lib.rs           crate docs, feature-gated mod declarations, re-exports
-    model.rs         domain models
-    validation.rs    rules and invariants
-    error.rs         stable error taxonomy
-    port.rs          consumed effect traits
-    service.rs       orchestration
-    mcp.rs           agent-facing MCP surface        #[cfg(feature = "mcp")]
-    memory.rs        deterministic local adapter     #[cfg(feature = "memory")]
-    fs.rs            filesystem adapter              #[cfg(feature = "fs")]
-  mcp-transport      shared bounded MCP transport, owns no capability
-projects/
-  <name>             thin binary composition root, one per deployable
+crates/<brick>/src/{lib,model,validation,error,port,service}.rs
+  + mandatory feature-gated mcp handler and optional local/fs/vendor/settings adapters
+projects/<name>/
+  exactly one binary composition root and unified MCP server
 ```
 
-A brick is one crate; a module is one adapter. Exactly three roles may be separate packages because a brick cannot contain them: a deployable binary (`server`, under `projects/`), a peer-coordination adapter (`mesh`), and shared test fixtures (`test-support`).
+A brick is one crate. Every mature `role = "brick"` package SHALL own the feature-gated bounded MCP handler contract; feature selection controls whether a project compiles it, not whether the brick defines it. Separate packages are limited to deployable `server`, peer `mesh`, and shared `test-support` roles. Shared `mcp-transport` infrastructure owns no capability. No library owns stdio serving or process lifecycle.
 
-A composition root is named for the deployable it produces, not for a capability family: it owns no capability and may host several brick MCP surfaces.
+Existing mature bricks that lack `HandlerContribution` conformance or generated capabilities/schema tools are migration debt, not exceptions. A temporary explicit allowlist may track them. Removal requires compiled and runtime conformance proving the shared `HandlerContribution` contract, `<namespace>_capabilities` and `<namespace>_schema`, exact namespace/tool ownership, and Makefile feature coverage. Regex-only source evidence is insufficient. Remove entries one brick at a time and delete the allowlist when migration completes; do not claim current portfolio-wide compliance before that evidence exists.
 
-Avoid bespoke abstractions where the standard library or a mature framework already provides the required primitive.
-
-The [Canonical Brick Standard](../specs/brick-standard/requirements.md) is the mandatory scaffold contract for new or refactored portfolio entries. It defines role eligibility, crate/test layout, inward dependency direction, strict boundary DTO conversion, explicit domain validation, policy-before-effect behavior, safe bounded egress, and binary-owned process lifecycle. The shared transport migration is complete and no library owns process lifecycle: `serve_stdio` has been removed from every brick, so transport binding belongs solely to a `projects/` binary. No such binary exists yet, so the workspace currently produces libraries only.
-
-## Capability roadmap
-
-The capability roadmap and taxonomy live in GitHub, not in this document. [Issue #11](https://github.com/bannff/Rust-Factory/issues/11) tracks the current taxonomy (superseding the scaffold-breadth portion of [Issue #9](https://github.com/bannff/Rust-Factory/issues/9)), and GitHub Projects tracks delivery state. This document stays focused on architecture; no table here is maintained or enforced against crate metadata.
+The [Canonical Brick Standard](../specs/brick-standard/requirements.md) is the mandatory scaffold contract. The capability roadmap and taxonomy live in GitHub issue [#11](https://github.com/bannff/Rust-Factory/issues/11) and GitHub Projects.

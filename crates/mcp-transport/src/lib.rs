@@ -4,6 +4,12 @@
 
 //! Bounded server-side newline-delimited MCP stdio transport.
 
+mod aggregate;
+pub use aggregate::{
+    AggregateBuildError, AggregateRouter, AggregateRouterBuilder, MAX_AGGREGATE_SCHEMA_BYTES,
+    MAX_CONTRIBUTIONS, MAX_TOOLS,
+};
+
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};

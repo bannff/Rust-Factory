@@ -1,0 +1,21 @@
+[package]
+name = "workflow-evaluation-demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+agent = { version = "=0.1.0", path = "../../crates/agent", default-features = false }
+evaluation = { version = "=0.1.0", path = "../../crates/evaluation", default-features = false, features = ["local", "memory"] }
+knowledge = { version = "=0.1.0", path = "../../crates/knowledge", default-features = false, features = ["static"] }
+llm-gateway = { version = "=0.1.0", path = "../../crates/llm-gateway", default-features = false, features = ["static"] }
+mcp-transport = { version = "=0.1.0", path = "../../crates/mcp-transport", default-features = false }
+observability = { version = "=0.1.0", path = "../../crates/observability", default-features = false, features = ["local"] }
+rmcp = { version = "=3.1.4", default-features = false, features = ["macros", "server"] }
+schemars = { version = "=1.2.2", default-features = false }
+serde = { version = "=1.0.228", default-features = false, features = ["derive"] }
+serde_json = { version = "=1.0.145", default-features = false }
+tokio = { version = "=1.49.0", default-features = false, features = ["macros", "rt-multi-thread", "io-std"] }
+workflow = { version = "=0.1.0", path = "../../crates/workflow", default-features = false, features = ["memory"] }
