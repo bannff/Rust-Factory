@@ -309,6 +309,9 @@ fn public_code(error: ObservabilityError) -> &'static str {
         PublicErrorCode::InvalidEvent => "invalid_event",
         PublicErrorCode::InvalidQuery => "invalid_query",
         PublicErrorCode::InvalidConfiguration => "invalid_configuration",
+        PublicErrorCode::InvalidTraceContext => "invalid_trace_context",
+        PublicErrorCode::InvalidSpan => "invalid_span",
+        PublicErrorCode::InvalidMetric => "invalid_metric",
         PublicErrorCode::LimitExceeded => "limit_exceeded",
         PublicErrorCode::OperationFailed => "operation_failed",
     }
