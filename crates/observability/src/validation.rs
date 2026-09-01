@@ -183,10 +183,8 @@ pub fn validate_metric(metric: &MetricEventV1) -> Result<(), ObservabilityError>
     if !metric.value.is_finite() {
         return Err(ObservabilityError::InvalidMetric);
     }
-    if let Some(unit) = &metric.unit {
-        if unit.len() > MAX_METRIC_UNIT_BYTES {
-            return Err(ObservabilityError::LimitExceeded);
-        }
+    if metric.unit.as_ref().is_some_and(|unit| unit.len() > MAX_METRIC_UNIT_BYTES) {
+        return Err(ObservabilityError::LimitExceeded);
     }
     if metric.attributes.len() > MAX_ATTRIBUTES {
         return Err(ObservabilityError::LimitExceeded);
