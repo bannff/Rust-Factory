@@ -111,6 +111,7 @@ ADAPTER_MODULE_NAMES = frozenset(
         "serdes_ai_evals",
         "biscuit",
         "observability",
+        "tokio_cancellation",
     }
 )
 VALID_STATUSES = {

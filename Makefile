@@ -31,7 +31,9 @@ lint-features:
 	cargo clippy -p knowledge --no-default-features --features static --all-targets -- -D warnings
 	cargo clippy -p llm-gateway --no-default-features --features static --all-targets -- -D warnings
 	cargo clippy -p llm-gateway --no-default-features --features genai --all-targets -- -D warnings
+	cargo clippy -p llm-gateway --no-default-features --features tokio_cancellation --all-targets -- -D warnings
 	cargo clippy -p llm-gateway --no-default-features --features static,genai --all-targets -- -D warnings
+	cargo clippy -p llm-gateway --no-default-features --features static,genai,tokio_cancellation --all-targets -- -D warnings
 	cargo clippy -p memory --features local --all-targets -- -D warnings
 	cargo clippy -p memory --features agentic --all-targets -- -D warnings
 	cargo clippy -p memory --features settings --all-targets -- -D warnings
@@ -71,7 +73,9 @@ test-features:
 	cargo test -p knowledge --no-default-features --features static
 	cargo test -p llm-gateway --no-default-features --features static
 	cargo test -p llm-gateway --no-default-features --features genai
+	cargo test -p llm-gateway --no-default-features --features tokio_cancellation
 	cargo test -p llm-gateway --no-default-features --features static,genai
+	cargo test -p llm-gateway --no-default-features --features static,genai,tokio_cancellation
 	cargo test -p memory --features local
 	cargo test -p memory --features settings
 	cargo test -p memory --features agentic,local

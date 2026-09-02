@@ -1655,6 +1655,7 @@ dependencies = [
  "genai",
  "serde",
  "serde_json",
+ "tokio-util",
 ]
 
 [[package]]

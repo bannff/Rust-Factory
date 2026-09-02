@@ -1,4 +1,5 @@
 use super::*;
+use crate::qa_tests::{TestCancellationHandle, TestCancellationSignalFactory};
 use crate::{AgentInvocationRequest, InvocationEvidence, InvocationEvidenceSink};
 use agent::{
     InvocationModelEvidence, InvocationModelFinishReason, InvocationModelIdempotency,
@@ -179,6 +180,7 @@ fn service(source: Result<TrustedContextV1, WorkflowError>, allow: bool) -> Test
             domain.clone(),
             resolver,
             Box::new(Factory),
+            Box::new(TestCancellationSignalFactory),
         ),
         domain,
         calls,
@@ -389,7 +391,7 @@ fn policy_invoker_rejects_bad_evidence_pre_runtime_and_forwards_control_unchange
     let invoker = PolicyAwareAgentInvoker::new(Runtime {
         calls: Arc::clone(&calls),
     });
-    let signal = crate::CancellationSignal::new();
+    let signal = TestCancellationHandle::default();
     let deadline = Deadline(Instant::now() + Duration::from_secs(1));
     let key = llm_gateway::IdempotencyKey::new("stable-key").expect("key");
     let control = llm_gateway::InvocationControl {
@@ -683,6 +685,7 @@ mod composition {
                 },
             ),
             Box::new(Factory),
+            Box::new(TestCancellationSignalFactory),
         );
         let response = ready(Box::pin(mcp.start_json(StartInput {
             workflow_id: "workflow".to_owned(),
@@ -799,6 +802,7 @@ mod composition {
                 },
             ),
             Box::new(Factory),
+            Box::new(TestCancellationSignalFactory),
         );
 
         for (context, run_key) in [(tenant_a.clone(), "run-a"), (tenant_b.clone(), "run-b")] {
@@ -1122,6 +1126,7 @@ mod composition {
                 },
             ),
             Box::new(Factory),
+            Box::new(TestCancellationSignalFactory),
         );
 
         let response = ready(Box::pin(mcp.start_json(StartInput {
@@ -1242,6 +1247,7 @@ mod composition {
                 },
             ),
             Box::new(Factory),
+            Box::new(TestCancellationSignalFactory),
         );
 
         let response = ready(Box::pin(mcp.start_json(StartInput {

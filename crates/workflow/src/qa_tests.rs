@@ -1,8 +1,7 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Weak, mpsc};
-use std::task::{Context, Wake};
-use std::time::Duration;
+use llm_gateway::{CancellationHandle, CancellationSignalFactory};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::task::Waker;
 
 struct ObjectSafeInvoker;
 impl AgentInvoker for ObjectSafeInvoker {
@@ -42,12 +41,71 @@ impl llm_gateway::DeadlineFactory for Factory {
     }
 }
 
+/// Trivial test-only `CancellationHandle`/`CancellationSignalFactory`
+/// fixture. Unlike the deleted hand-rolled `WaiterRegistry`, this supports
+/// exactly one waiter (matching the SME's finding that real usage is
+/// exactly one `.cancelled()` future polled per in-flight attempt) rather
+/// than a bounded broadcast registry — no capacity limit, no token space,
+/// no poisoning: those were artifacts of the deleted implementation, not
+/// product requirements (see #72).
+#[derive(Clone, Default)]
+pub(crate) struct TestCancellationHandle(Arc<TestCancellationState>);
+#[derive(Default)]
+struct TestCancellationState {
+    cancelled: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+impl llm_gateway::CancellationSignal for TestCancellationHandle {
+    fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(AtomicOrdering::Acquire)
+    }
+    fn cancelled(&self) -> llm_gateway::CancellationFuture<'_> {
+        Box::pin(TestCancellationWait(&self.0))
+    }
+}
+impl llm_gateway::CancellationHandle for TestCancellationHandle {
+    fn cancel(&self) {
+        self.0.cancelled.store(true, AtomicOrdering::Release);
+        if let Some(waker) = self.0.waker.lock().expect("waker").take() {
+            waker.wake();
+        }
+    }
+}
+struct TestCancellationWait<'a>(&'a TestCancellationState);
+impl std::future::Future for TestCancellationWait<'_> {
+    type Output = ();
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        // Register the waker before re-checking `cancelled`, not after: if
+        // the order were reversed, a `cancel()` landing between the check
+        // and the registration would see no waker to wake, and this poll
+        // would then install a waker for an event that already fired,
+        // waiting forever. Registering first closes that race - whichever
+        // side (this check, or `cancel()`'s take()) runs second observes
+        // the other's effect.
+        *self.0.waker.lock().expect("waker") = Some(context.waker().clone());
+        if self.0.cancelled.load(AtomicOrdering::Acquire) {
+            return std::task::Poll::Ready(());
+        }
+        std::task::Poll::Pending
+    }
+}
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TestCancellationSignalFactory;
+impl llm_gateway::CancellationSignalFactory for TestCancellationSignalFactory {
+    fn create(&self) -> Arc<dyn llm_gateway::CancellationHandle> {
+        Arc::new(TestCancellationHandle::default())
+    }
+}
+
 #[test]
 fn async_workflow_ports_are_object_safe() {
     let invoker: &dyn AgentInvoker = &ObjectSafeInvoker;
     let factory: &dyn llm_gateway::DeadlineFactory = &Factory;
-    let signal = CancellationSignal::new();
-    let cancellation: &dyn llm_gateway::CancellationSignal = &signal;
+    let signal = TestCancellationSignalFactory.create();
+    let cancellation: &dyn llm_gateway::CancellationSignal = signal.as_ref();
     let deadline = factory.create(Instant::now());
     let deadline_signal: &dyn llm_gateway::DeadlineSignal = deadline.as_ref();
     assert!(
@@ -59,399 +117,66 @@ fn async_workflow_ports_are_object_safe() {
     assert_eq!(deadline_signal.instant(), deadline.instant());
 }
 
-struct WakeCount(AtomicUsize);
-impl Wake for WakeCount {
+#[test]
+fn cancel_before_wait_completes_immediately() {
+    let signal = TestCancellationSignalFactory.create();
+    signal.cancel();
+    let mut wait = llm_gateway::CancellationSignal::cancelled(signal.as_ref());
+    let waker = Waker::noop();
+    assert!(
+        wait.as_mut()
+            .poll(&mut std::task::Context::from_waker(waker))
+            .is_ready()
+    );
+}
+
+#[test]
+fn a_pending_wait_reflects_state_after_cancel() {
+    let signal = TestCancellationSignalFactory.create();
+    assert!(!signal.is_cancelled());
+    signal.cancel();
+    assert!(signal.is_cancelled());
+}
+
+#[test]
+fn cancel_is_idempotent() {
+    let signal = TestCancellationSignalFactory.create();
+    signal.cancel();
+    signal.cancel();
+    assert!(signal.is_cancelled());
+}
+
+#[test]
+fn cloned_handles_share_the_same_underlying_state() {
+    let signal: Arc<dyn CancellationHandle> = TestCancellationSignalFactory.create();
+    let clone = Arc::clone(&signal);
+    clone.cancel();
+    assert!(signal.is_cancelled());
+}
+
+struct WakeCount(std::sync::atomic::AtomicUsize);
+impl std::task::Wake for WakeCount {
     fn wake(self: Arc<Self>) {
         self.0.fetch_add(1, AtomicOrdering::Relaxed);
     }
 }
 
 #[test]
-fn cancellation_wakes_all_waiters_and_all_become_ready() {
-    let signal = CancellationSignal::new();
-    let counts = (0..3)
-        .map(|_| Arc::new(WakeCount(AtomicUsize::new(0))))
-        .collect::<Vec<_>>();
-    let wakers = counts
-        .iter()
-        .map(|count| Waker::from(Arc::clone(count)))
-        .collect::<Vec<_>>();
-    let mut waits = (0..3)
-        .map(|_| llm_gateway::CancellationSignal::cancelled(&signal))
-        .collect::<Vec<_>>();
-
-    for (wait, waker) in waits.iter_mut().zip(&wakers) {
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(waker))
-                .is_pending()
-        );
-    }
-    signal.cancel();
-
-    assert!(
-        signal
-            .0
-            .registry
-            .lock()
-            .expect("registry")
-            .waiters
-            .is_empty()
-    );
-    for count in &counts {
-        assert_eq!(count.0.load(AtomicOrdering::Relaxed), 1);
-    }
-    for (wait, waker) in waits.iter_mut().zip(&wakers) {
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(waker))
-                .is_ready()
-        );
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(waker))
-                .is_ready()
-        );
-    }
-}
-
-#[test]
-fn repeated_cancel_is_idempotent_and_new_waiters_are_stickily_ready() {
-    let signal = CancellationSignal::new();
-    let counts = (0..2)
-        .map(|_| Arc::new(WakeCount(AtomicUsize::new(0))))
-        .collect::<Vec<_>>();
-    let wakers = counts
-        .iter()
-        .map(|count| Waker::from(Arc::clone(count)))
-        .collect::<Vec<_>>();
-    let mut waits = (0..2)
-        .map(|_| llm_gateway::CancellationSignal::cancelled(&signal))
-        .collect::<Vec<_>>();
-    for (wait, waker) in waits.iter_mut().zip(&wakers) {
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(waker))
-                .is_pending()
-        );
-    }
-
-    signal.cancel();
-    signal.cancel();
-
-    assert!(
-        signal
-            .0
-            .registry
-            .lock()
-            .expect("registry")
-            .waiters
-            .is_empty()
-    );
-    for count in &counts {
-        assert_eq!(count.0.load(AtomicOrdering::Relaxed), 1);
-    }
-    for (wait, waker) in waits.iter_mut().zip(&wakers) {
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(waker))
-                .is_ready()
-        );
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(waker))
-                .is_ready()
-        );
-    }
-
-    let mut late = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        late.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        late.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        signal
-            .0
-            .registry
-            .lock()
-            .expect("registry")
-            .waiters
-            .is_empty()
-    );
-}
-
-#[test]
-fn changed_waker_updates_only_its_own_entry_without_growth() {
-    let signal = CancellationSignal::new();
-    let mut first = llm_gateway::CancellationSignal::cancelled(&signal);
-    let mut second = llm_gateway::CancellationSignal::cancelled(&signal);
-    let old_first_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let new_first_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let second_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let old_first_waker = Waker::from(Arc::clone(&old_first_count));
-    let new_first_waker = Waker::from(Arc::clone(&new_first_count));
-    let second_waker = Waker::from(Arc::clone(&second_count));
-
-    assert!(
-        first
-            .as_mut()
-            .poll(&mut Context::from_waker(&old_first_waker))
-            .is_pending()
-    );
-    assert!(
-        second
-            .as_mut()
-            .poll(&mut Context::from_waker(&second_waker))
-            .is_pending()
-    );
-    assert!(
-        first
-            .as_mut()
-            .poll(&mut Context::from_waker(&new_first_waker))
-            .is_pending()
-    );
-    assert_eq!(signal.0.registry.lock().expect("registry").waiters.len(), 2);
-
-    signal.cancel();
-    assert_eq!(old_first_count.0.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(new_first_count.0.load(AtomicOrdering::Relaxed), 1);
-    assert_eq!(second_count.0.load(AtomicOrdering::Relaxed), 1);
-}
-
-struct ReentrantDropWake {
-    state: Weak<CancellationState>,
-}
-#[allow(unknown_lints, clippy::manual_noop_waker)] // Wake is inert; Drop re-enters cancellation for lock-safety.
-impl Wake for ReentrantDropWake {
-    fn wake(self: Arc<Self>) {}
-}
-impl Drop for ReentrantDropWake {
-    fn drop(&mut self) {
-        if let Some(state) = self.state.upgrade() {
-            CancellationSignal(state).cancel();
-        }
-    }
-}
-
-fn assert_reentrant_waker_drop_completes(replace: bool) {
-    let (done_tx, done_rx) = mpsc::sync_channel(1);
-    let worker = std::thread::spawn(move || {
-        let signal = CancellationSignal::new();
-        let mut wait = llm_gateway::CancellationSignal::cancelled(&signal);
-        let wake = Arc::new(ReentrantDropWake {
-            state: Arc::downgrade(&signal.0),
-        });
-        let waker = Waker::from(Arc::clone(&wake));
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(&waker))
-                .is_pending()
-        );
-        drop(waker);
-        drop(wake);
-
-        if replace {
-            assert!(
-                wait.as_mut()
-                    .poll(&mut Context::from_waker(Waker::noop()))
-                    .is_pending()
-            );
-            assert!(signal.is_cancelled());
-            assert!(
-                wait.as_mut()
-                    .poll(&mut Context::from_waker(Waker::noop()))
-                    .is_ready()
-            );
-        } else {
-            drop(wait);
-            assert!(signal.is_cancelled());
-        }
-        done_tx.send(()).expect("completion notification");
-    });
-
-    done_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("reentrant waker drop must not run while the registry is locked");
-    worker.join().expect("waker-drop worker");
-}
-
-#[test]
-fn replacement_and_removal_drop_reentrant_wakers_outside_registry_lock() {
-    assert_reentrant_waker_drop_completes(true);
-    assert_reentrant_waker_drop_completes(false);
-}
-
-#[test]
-fn dropping_wait_unregisters_only_its_own_token() {
-    let signal = CancellationSignal::new();
-    let mut first = llm_gateway::CancellationSignal::cancelled(&signal);
-    let mut second = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        first
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_pending()
-    );
-    assert!(
-        second
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_pending()
-    );
-    assert_eq!(signal.0.registry.lock().expect("registry").waiters.len(), 2);
-
-    drop(first);
-    let registry = signal.0.registry.lock().expect("registry");
-    assert_eq!(registry.waiters.len(), 1);
-    assert!(registry.waiters.contains_key(&1));
-    drop(registry);
-    drop(second);
-    assert!(
-        signal
-            .0
-            .registry
-            .lock()
-            .expect("registry")
-            .waiters
-            .is_empty()
-    );
-}
-
-#[test]
-fn cancellation_capacity_accepts_exactly_64_and_65th_fails_closed() {
-    let signal = CancellationSignal::new();
-    let mut waits = (0..MAX_CANCELLATION_WAITERS)
-        .map(|_| llm_gateway::CancellationSignal::cancelled(&signal))
-        .collect::<Vec<_>>();
-    for wait in &mut waits {
-        assert!(
-            wait.as_mut()
-                .poll(&mut Context::from_waker(Waker::noop()))
-                .is_pending()
-        );
-    }
-    assert_eq!(
-        signal.0.registry.lock().expect("registry").waiters.len(),
-        64
-    );
-
-    let mut overflow = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        overflow
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        overflow
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert_eq!(
-        signal.0.registry.lock().expect("registry").waiters.len(),
-        64
-    );
-}
-
-#[test]
-fn cancellation_token_issues_u64_max_once_and_never_wraps() {
-    let signal = CancellationSignal::new();
-    signal.0.registry.lock().expect("registry").next_token = Some(u64::MAX);
-    let mut last = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        last.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_pending()
-    );
-    {
-        let registry = signal.0.registry.lock().expect("registry");
-        assert!(registry.waiters.contains_key(&u64::MAX));
-        assert_eq!(registry.next_token, None);
-    }
-
-    let mut exhausted = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        exhausted
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        exhausted
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert_eq!(signal.0.registry.lock().expect("registry").waiters.len(), 1);
-}
-
-#[test]
-fn cancellation_observed_before_poll_is_immediately_and_stickily_ready() {
-    let signal = CancellationSignal::new();
-    signal.cancel();
-    let mut wait = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        wait.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        wait.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        signal
-            .0
-            .registry
-            .lock()
-            .expect("registry")
-            .waiters
-            .is_empty()
-    );
-}
-
-#[test]
-fn cancellation_published_before_under_lock_check_fails_closed_without_admission() {
-    let signal = CancellationSignal::new();
-    let mut wait = CancellationWait::new(&signal.0);
-    signal.0.cancelled.store(true, Ordering::Release);
-
-    assert!(wait.poll_after_precheck(Waker::noop().clone()).is_ready());
-    assert!(wait.completed);
-    assert_eq!(wait.token, None);
-    assert!(
-        signal
-            .0
-            .registry
-            .lock()
-            .expect("registry")
-            .waiters
-            .is_empty()
-    );
-}
-
-#[test]
 fn cancellation_between_registration_and_drain_has_no_lost_wake() {
-    let signal = CancellationSignal::new();
-    let mut wait = llm_gateway::CancellationSignal::cancelled(&signal);
-    let count = Arc::new(WakeCount(AtomicUsize::new(0)));
+    // Regression guard for the exact race qa-tester caught: cancel()
+    // landing between the fixture's is_cancelled() check and its waker
+    // registration must not leave a pending poll waiting forever.
+    let signal = TestCancellationSignalFactory.create();
+    let mut wait = signal.cancelled();
+    let count = Arc::new(WakeCount(std::sync::atomic::AtomicUsize::new(0)));
     let waker = Waker::from(Arc::clone(&count));
     assert!(
         wait.as_mut()
-            .poll(&mut Context::from_waker(&waker))
+            .poll(&mut std::task::Context::from_waker(&waker))
             .is_pending()
     );
 
-    let registry = signal.0.registry.lock().expect("registry");
-    let cancel_signal = signal.clone();
+    let cancel_signal = Arc::clone(&signal);
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let cancel = std::thread::spawn(move || {
         started_tx.send(()).expect("start notification");
@@ -461,244 +186,24 @@ fn cancellation_between_registration_and_drain_has_no_lost_wake() {
     while !signal.is_cancelled() {
         std::thread::yield_now();
     }
-    assert_eq!(registry.waiters.len(), 1);
-    drop(registry);
     cancel.join().expect("cancel thread");
 
     assert_eq!(count.0.load(AtomicOrdering::Relaxed), 1);
     assert!(
         wait.as_mut()
-            .poll(&mut Context::from_waker(&waker))
-            .is_ready()
-    );
-}
-
-struct RegistryInspectWake {
-    state: Arc<CancellationState>,
-    wake_count: AtomicUsize,
-}
-impl Wake for RegistryInspectWake {
-    fn wake(self: Arc<Self>) {
-        assert!(
-            self.state
-                .registry
-                .lock()
-                .expect("registry")
-                .waiters
-                .is_empty()
-        );
-        self.wake_count.fetch_add(1, AtomicOrdering::Relaxed);
-    }
-}
-
-#[test]
-fn cancellation_drains_registry_before_waking() {
-    let signal = CancellationSignal::new();
-    let inspect = Arc::new(RegistryInspectWake {
-        state: Arc::clone(&signal.0),
-        wake_count: AtomicUsize::new(0),
-    });
-    let waker = Waker::from(Arc::clone(&inspect));
-    let mut wait = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        wait.as_mut()
-            .poll(&mut Context::from_waker(&waker))
-            .is_pending()
-    );
-
-    let worker_signal = signal.clone();
-    let (done_tx, done_rx) = mpsc::sync_channel(1);
-    let worker = std::thread::spawn(move || {
-        worker_signal.cancel();
-        done_tx.send(()).expect("completion notification");
-    });
-    done_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("cancellation must not wake while holding the registry lock");
-    worker.join().expect("cancel worker");
-    assert_eq!(inspect.wake_count.load(AtomicOrdering::Relaxed), 1);
-}
-
-#[test]
-fn cloned_cancellation_signals_broadcast_to_all_waiters() {
-    let signal = CancellationSignal::new();
-    let clone = signal.clone();
-    let mut original_wait = llm_gateway::CancellationSignal::cancelled(&signal);
-    let mut clone_wait = llm_gateway::CancellationSignal::cancelled(&clone);
-    let original_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let clone_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let original_waker = Waker::from(Arc::clone(&original_count));
-    let clone_waker = Waker::from(Arc::clone(&clone_count));
-    assert!(
-        original_wait
-            .as_mut()
-            .poll(&mut Context::from_waker(&original_waker))
-            .is_pending()
-    );
-    assert!(
-        clone_wait
-            .as_mut()
-            .poll(&mut Context::from_waker(&clone_waker))
-            .is_pending()
-    );
-
-    clone.cancel();
-    assert_eq!(original_count.0.load(AtomicOrdering::Relaxed), 1);
-    assert_eq!(clone_count.0.load(AtomicOrdering::Relaxed), 1);
-    assert!(
-        original_wait
-            .as_mut()
-            .poll(&mut Context::from_waker(&original_waker))
-            .is_ready()
-    );
-    assert!(
-        clone_wait
-            .as_mut()
-            .poll(&mut Context::from_waker(&clone_waker))
+            .poll(&mut std::task::Context::from_waker(&waker))
             .is_ready()
     );
 }
 
 #[test]
-fn missing_registration_fails_closed_without_leaking() {
-    let signal = CancellationSignal::new();
-    let mut wait = llm_gateway::CancellationSignal::cancelled(&signal);
-    assert!(
-        wait.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_pending()
-    );
-    signal.0.registry.lock().expect("registry").waiters.clear();
-
-    assert!(
-        wait.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        wait.as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_ready()
-    );
-    assert!(
-        signal
-            .0
-            .registry
-            .lock()
-            .expect("registry")
-            .waiters
-            .is_empty()
-    );
-}
-
-fn poison_registry(state: Arc<CancellationState>) {
-    let _ = std::thread::spawn(move || {
-        let _guard = state.registry.lock().expect("registry");
-        panic!("poison registry");
-    })
-    .join();
-}
-
-#[test]
-fn poisoned_registry_poll_removes_only_own_waiter_and_cancel_wakes_survivor() {
-    let signal = CancellationSignal::new();
-    let mut failed_closed = llm_gateway::CancellationSignal::cancelled(&signal);
-    let mut survivor = llm_gateway::CancellationSignal::cancelled(&signal);
-    let failed_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let survivor_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let failed_waker = Waker::from(Arc::clone(&failed_count));
-    let survivor_waker = Waker::from(Arc::clone(&survivor_count));
-    assert!(
-        failed_closed
-            .as_mut()
-            .poll(&mut Context::from_waker(&failed_waker))
-            .is_pending()
-    );
-    assert!(
-        survivor
-            .as_mut()
-            .poll(&mut Context::from_waker(&survivor_waker))
-            .is_pending()
-    );
-
-    poison_registry(Arc::clone(&signal.0));
-    assert!(
-        failed_closed
-            .as_mut()
-            .poll(&mut Context::from_waker(&failed_waker))
-            .is_ready()
-    );
-    {
-        let registry = signal
-            .0
-            .registry
-            .lock()
-            .expect_err("registry remains poisoned")
-            .into_inner();
-        assert_eq!(registry.waiters.len(), 1);
-        assert!(registry.waiters.contains_key(&1));
-    }
-    assert_eq!(failed_count.0.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(survivor_count.0.load(AtomicOrdering::Relaxed), 0);
-
-    signal.cancel();
-    assert!(signal.is_cancelled());
-    assert_eq!(failed_count.0.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(survivor_count.0.load(AtomicOrdering::Relaxed), 1);
-    assert!(
-        survivor
-            .as_mut()
-            .poll(&mut Context::from_waker(&survivor_waker))
-            .is_ready()
-    );
-}
-
-#[test]
-fn dropping_wait_against_poisoned_registry_removes_only_it_and_survivor_wakes() {
-    let signal = CancellationSignal::new();
-    let mut removed = llm_gateway::CancellationSignal::cancelled(&signal);
-    let mut survivor = llm_gateway::CancellationSignal::cancelled(&signal);
-    let removed_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let survivor_count = Arc::new(WakeCount(AtomicUsize::new(0)));
-    let removed_waker = Waker::from(Arc::clone(&removed_count));
-    let survivor_waker = Waker::from(Arc::clone(&survivor_count));
-    assert!(
-        removed
-            .as_mut()
-            .poll(&mut Context::from_waker(&removed_waker))
-            .is_pending()
-    );
-    assert!(
-        survivor
-            .as_mut()
-            .poll(&mut Context::from_waker(&survivor_waker))
-            .is_pending()
-    );
-
-    poison_registry(Arc::clone(&signal.0));
-    drop(removed);
-    {
-        let registry = signal
-            .0
-            .registry
-            .lock()
-            .expect_err("registry remains poisoned")
-            .into_inner();
-        assert_eq!(registry.waiters.len(), 1);
-        assert!(registry.waiters.contains_key(&1));
-    }
-    assert_eq!(removed_count.0.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(survivor_count.0.load(AtomicOrdering::Relaxed), 0);
-
-    signal.cancel();
-    assert_eq!(removed_count.0.load(AtomicOrdering::Relaxed), 0);
-    assert_eq!(survivor_count.0.load(AtomicOrdering::Relaxed), 1);
-    assert!(
-        survivor
-            .as_mut()
-            .poll(&mut Context::from_waker(&survivor_waker))
-            .is_ready()
-    );
+fn two_signals_from_the_same_factory_are_independent() {
+    let factory = TestCancellationSignalFactory;
+    let first = factory.create();
+    let second = factory.create();
+    first.cancel();
+    assert!(first.is_cancelled());
+    assert!(!second.is_cancelled());
 }
 
 #[test]

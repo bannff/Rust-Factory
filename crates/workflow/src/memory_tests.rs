@@ -208,6 +208,7 @@ fn runner(
         StaticWorkflowCatalog::new([definition(max_evidence_bytes)]),
         invoker,
         Box::new(deadlines),
+        Box::new(crate::qa_tests::TestCancellationSignalFactory),
     )
 }
 
@@ -557,6 +558,7 @@ fn evidence_overflow_persists_no_partial_invocation_evidence() {
             },
         ),
         Box::new(TestDeadlines::default()),
+        Box::new(crate::qa_tests::TestCancellationSignalFactory),
     );
     assert_eq!(
         ready(service.start(
@@ -618,7 +620,7 @@ fn registration_token_guard_does_not_remove_a_newer_registration() {
         run_id.clone(),
         crate::ActiveCancellation {
             token: 2,
-            signal: crate::CancellationSignal::new(),
+            signal: std::sync::Arc::new(crate::qa_tests::TestCancellationHandle::default()),
         },
     );
     let stale = crate::CancellationRegistration {
@@ -686,8 +688,8 @@ fn static_invoker_preflight_prevents_evidence_on_cancelled_control() {
             evidence: vec![InvocationEvidence::new("result", "secret").expect("result")],
         },
     );
-    let signal = crate::CancellationSignal::new();
-    signal.cancel();
+    let signal = crate::qa_tests::TestCancellationHandle::default();
+    llm_gateway::CancellationHandle::cancel(&signal);
     let key = llm_gateway::IdempotencyKey::new("key").expect("key");
     let deadline = NeverDeadline;
     let mut sink = Sink::default();

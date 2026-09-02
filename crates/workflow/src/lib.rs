@@ -22,9 +22,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, Ordering},
 };
-use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
 use agent::{AgentId, EffectiveCapabilityCeilingV1, validate_effective_capability_ceiling};
@@ -243,194 +242,6 @@ pub trait WorkflowStore: Send + Sync {
     ) -> Result<TransitionResult, WorkflowError>;
 }
 
-const MAX_CANCELLATION_WAITERS: usize = 64;
-
-#[derive(Debug)]
-struct WaiterRegistry {
-    waiters: BTreeMap<u64, Waker>,
-    next_token: Option<u64>,
-}
-impl WaiterRegistry {
-    fn new() -> Self {
-        Self {
-            waiters: BTreeMap::new(),
-            next_token: Some(0),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct CancellationState {
-    cancelled: AtomicBool,
-    registry: Mutex<WaiterRegistry>,
-}
-
-struct CancellationWait<'a> {
-    state: &'a CancellationState,
-    token: Option<u64>,
-    completed: bool,
-}
-impl<'a> CancellationWait<'a> {
-    fn new(state: &'a CancellationState) -> Self {
-        Self {
-            state,
-            token: None,
-            completed: false,
-        }
-    }
-
-    fn finish_ready(
-        &mut self,
-        mut registry: std::sync::MutexGuard<'_, WaiterRegistry>,
-        incoming_waker: Option<Waker>,
-    ) -> Poll<()> {
-        let removed_waker = self
-            .token
-            .take()
-            .and_then(|token| registry.waiters.remove(&token));
-        self.completed = true;
-        drop(registry);
-        drop(removed_waker);
-        drop(incoming_waker);
-        Poll::Ready(())
-    }
-
-    fn poll_after_precheck(&mut self, incoming_waker: Waker) -> Poll<()> {
-        let mut registry = match self.state.registry.lock() {
-            Ok(registry) => registry,
-            Err(poisoned) => {
-                return self.finish_ready(poisoned.into_inner(), Some(incoming_waker));
-            }
-        };
-        if self.state.cancelled.load(Ordering::Acquire) {
-            return self.finish_ready(registry, Some(incoming_waker));
-        }
-        if let Some(token) = self.token {
-            let Some(registered_waker) = registry.waiters.get_mut(&token) else {
-                self.token = None;
-                self.completed = true;
-                drop(registry);
-                drop(incoming_waker);
-                return Poll::Ready(());
-            };
-            if registered_waker.will_wake(&incoming_waker) {
-                drop(registry);
-                drop(incoming_waker);
-                return Poll::Pending;
-            }
-            let old_waker = std::mem::replace(registered_waker, incoming_waker);
-            drop(registry);
-            drop(old_waker);
-            return Poll::Pending;
-        }
-        if registry.waiters.len() >= MAX_CANCELLATION_WAITERS {
-            self.completed = true;
-            drop(registry);
-            drop(incoming_waker);
-            return Poll::Ready(());
-        }
-        let Some(token) = registry.next_token.take() else {
-            self.completed = true;
-            drop(registry);
-            drop(incoming_waker);
-            return Poll::Ready(());
-        };
-        registry.next_token = token.checked_add(1);
-        match registry.waiters.entry(token) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(incoming_waker);
-                self.token = Some(token);
-                Poll::Pending
-            }
-            std::collections::btree_map::Entry::Occupied(_) => {
-                self.completed = true;
-                drop(registry);
-                drop(incoming_waker);
-                Poll::Ready(())
-            }
-        }
-    }
-}
-impl Future for CancellationWait<'_> {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, context: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let wait = self.get_mut();
-        if wait.completed {
-            return Poll::Ready(());
-        }
-        if wait.state.cancelled.load(Ordering::Acquire) {
-            let registry = match wait.state.registry.lock() {
-                Ok(registry) => registry,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            return wait.finish_ready(registry, None);
-        }
-        let incoming_waker = context.waker().clone();
-        wait.poll_after_precheck(incoming_waker)
-    }
-}
-impl Drop for CancellationWait<'_> {
-    fn drop(&mut self) {
-        let Some(token) = self.token.take() else {
-            return;
-        };
-        let mut registry = match self.state.registry.lock() {
-            Ok(registry) => registry,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        let removed_waker = registry.waiters.remove(&token);
-        drop(registry);
-        drop(removed_waker);
-    }
-}
-
-/// Process-local cancellation signal with a bounded 64-subscriber broadcast.
-///
-/// Waiting fails closed and completes if subscriber capacity or token space is
-/// exhausted, or if the process-local waiter registry is poisoned.
-#[derive(Clone, Debug)]
-pub struct CancellationSignal(Arc<CancellationState>);
-impl CancellationSignal {
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Arc::new(CancellationState {
-            cancelled: AtomicBool::new(false),
-            registry: Mutex::new(WaiterRegistry::new()),
-        }))
-    }
-    pub fn cancel(&self) {
-        self.0.cancelled.store(true, Ordering::Release);
-        let waiters = {
-            let mut registry = match self.0.registry.lock() {
-                Ok(registry) => registry,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            std::mem::take(&mut registry.waiters)
-        };
-        for waiter in waiters.into_values() {
-            waiter.wake();
-        }
-    }
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.0.cancelled.load(Ordering::Acquire)
-    }
-}
-impl Default for CancellationSignal {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl llm_gateway::CancellationSignal for CancellationSignal {
-    fn is_cancelled(&self) -> bool {
-        self.is_cancelled()
-    }
-
-    fn cancelled(&self) -> llm_gateway::CancellationFuture<'_> {
-        Box::pin(CancellationWait::new(&self.0))
-    }
-}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InvocationPolicy {
     pub effective_capability_ceiling: EffectiveCapabilityCeilingV1,
@@ -580,7 +391,7 @@ pub fn input_digest(canonical_input: &str) -> String {
 #[derive(Clone)]
 struct ActiveCancellation {
     token: u64,
-    signal: CancellationSignal,
+    signal: Arc<dyn llm_gateway::CancellationHandle>,
 }
 
 struct CancellationRegistration<'a> {
@@ -605,6 +416,7 @@ pub struct WorkflowRunner<S, C, I> {
     catalog: C,
     invoker: I,
     deadline_factory: Box<dyn llm_gateway::DeadlineFactory>,
+    cancellation_factory: Box<dyn llm_gateway::CancellationSignalFactory>,
     cancellations: Mutex<BTreeMap<LogicalId, ActiveCancellation>>,
     next_registration: AtomicU64,
 }
@@ -615,12 +427,14 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
         catalog: C,
         invoker: I,
         deadline_factory: Box<dyn llm_gateway::DeadlineFactory>,
+        cancellation_factory: Box<dyn llm_gateway::CancellationSignalFactory>,
     ) -> Self {
         Self {
             store,
             catalog,
             invoker,
             deadline_factory,
+            cancellation_factory,
             cancellations: Mutex::new(BTreeMap::new()),
             next_registration: AtomicU64::new(1),
         }
@@ -757,7 +571,7 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
             Ok(TransitionResult::NotFound) => return Err(WorkflowError::NotFound),
             Err(error) => return Err(error),
         };
-        let signal = CancellationSignal::new();
+        let signal = self.cancellation_factory.create();
         let mut evidence = match EvidenceCollector::new(active.max_evidence_bytes, &active.events) {
             Ok(evidence) => evidence,
             Err(error) => {
@@ -813,7 +627,7 @@ impl<S: WorkflowStore, C: WorkflowDefinitionCatalog, I: AgentInvoker> WorkflowRu
         let deadline = self.deadline_factory.create(instant);
         let control = llm_gateway::InvocationControl {
             idempotency_key: &key,
-            cancellation: &signal,
+            cancellation: signal.as_ref(),
             deadline: deadline.as_ref(),
         };
         let outcome = self

@@ -320,6 +320,7 @@ where
         runtime: R,
         resolver: WorkflowPolicyContextResolver<T, P>,
         deadline_factory: Box<dyn llm_gateway::DeadlineFactory>,
+        cancellation_factory: Box<dyn llm_gateway::CancellationSignalFactory>,
     ) -> Self {
         Self {
             runner: WorkflowRunner::new(
@@ -327,6 +328,7 @@ where
                 catalog,
                 PolicyAwareAgentInvoker::new(runtime),
                 deadline_factory,
+                cancellation_factory,
             ),
             resolver,
             tool_router: Self::tool_router(),
@@ -539,9 +541,9 @@ pub const fn tool_names() -> [&'static str; 5] {
 #[cfg(test)]
 mod migration_tests {
     use super::*;
+    use crate::qa_tests::TestCancellationHandle;
     use crate::{
-        AgentInvocationRequest, CancellationSignal, InvocationEvidence, InvocationEvidenceSink,
-        RequestContext,
+        AgentInvocationRequest, InvocationEvidence, InvocationEvidenceSink, RequestContext,
     };
     use agent::{
         InvocationModelEvidence, InvocationModelFinishReason, InvocationModelIdempotency,
@@ -648,7 +650,7 @@ mod migration_tests {
             controls: Arc::clone(&controls),
         });
         let key = llm_gateway::IdempotencyKey::new("key").expect("key");
-        let cancellation = CancellationSignal::new();
+        let cancellation = TestCancellationHandle::default();
         let deadline = Deadline(Instant::now() + Duration::from_secs(1));
         let control = llm_gateway::InvocationControl {
             idempotency_key: &key,

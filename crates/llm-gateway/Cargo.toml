@@ -15,11 +15,13 @@ status = "implemented"
 [features]
 static = []
 genai = ["dep:genai"]
+tokio_cancellation = ["dep:tokio-util"]
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 genai = { workspace = true, optional = true, default-features = false }
+tokio-util = { version = "=0.7.19", optional = true }
 
 [lints]
 workspace = true
