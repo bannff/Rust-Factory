@@ -76,10 +76,13 @@ ADAPTER_MODULES = {
     "agentic_memory": frozenset({"agentic"}),
     "redb": frozenset({"redb"}),
     "opentelemetry": frozenset({"opentelemetry"}),
+    "opentelemetry_sdk": frozenset({"opentelemetry"}),
     "serdes_ai_evals": frozenset({"serdes_ai_evals"}),
     "biscuit_auth": frozenset({"biscuit"}),
     "prost": frozenset({"biscuit"}),
     "subprocess": frozenset({"docker"}),
+    "tokio": frozenset({"genai", "tokio_cancellation", "opentelemetry"}),
+    "tokio_util": frozenset({"tokio_cancellation"}),
 }
 
 # Every module name a brick may feature gate. A superset of ADAPTER_MODULES'

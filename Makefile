@@ -114,7 +114,7 @@ test-features:
 # graph in isolation, so it says nothing about artifacts: Cargo unifies features
 # per build graph, so a binary composing several bricks with `mcp` enabled links
 # one framework-carrying build of each.
-ADAPTER_DEPS := rmcp mcp-transport schemars@0.9.0 schemars@1.2.2 anyhow cap-std tokio genai reqwest futures agentic-memory redb opentelemetry serdes-ai-evals biscuit-auth prost subprocess
+ADAPTER_DEPS := rmcp mcp-transport schemars@0.9.0 schemars@1.2.2 anyhow cap-std tokio genai reqwest futures agentic-memory redb opentelemetry opentelemetry_sdk serdes-ai-evals biscuit-auth prost subprocess
 
 isolation-check:
 	@for dep in $(ADAPTER_DEPS); do \

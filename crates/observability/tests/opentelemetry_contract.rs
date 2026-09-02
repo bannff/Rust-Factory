@@ -529,3 +529,258 @@ mod metric_sink {
         );
     }
 }
+
+mod span_sink {
+    use std::collections::BTreeMap;
+    use std::future::Future;
+    use std::sync::{Arc, Mutex};
+
+    use observability::opentelemetry::OpenTelemetrySpanSink;
+    use observability::{
+        EventName, EventTarget, ObservabilityError, SpanEnvelopeV1, SpanEventV1, SpanId, SpanSink,
+        SpanStatus, TelemetryGuarantees, TenantId, Timestamp, TraceContextV1, TraceFlags, TraceId,
+    };
+    use opentelemetry_sdk::error::OTelSdkResult;
+    use opentelemetry_sdk::trace::SpanData;
+
+    #[derive(Clone, Debug, Default)]
+    struct RecordingExporter {
+        exported: Arc<Mutex<Vec<Vec<SpanData>>>>,
+    }
+    impl opentelemetry_sdk::trace::SpanExporter for RecordingExporter {
+        fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
+            self.exported.lock().expect("exported").push(batch);
+            std::future::ready(Ok(()))
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct FailingExporter;
+    impl opentelemetry_sdk::trace::SpanExporter for FailingExporter {
+        fn export(&self, _: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
+            std::future::ready(Err(
+                opentelemetry_sdk::error::OTelSdkError::InternalFailure("export failed".to_owned()),
+            ))
+        }
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime")
+    }
+
+    fn trace_context() -> TraceContextV1 {
+        TraceContextV1::new(
+            TraceId::new([1u8; 16]).expect("trace id"),
+            SpanId::new([2u8; 8]).expect("span id"),
+            TraceFlags::from_raw(0x01),
+            None,
+            BTreeMap::new(),
+        )
+        .expect("trace context")
+    }
+
+    fn span_envelope(status: SpanStatus, attributes: BTreeMap<String, String>) -> SpanEnvelopeV1 {
+        SpanEnvelopeV1 {
+            tenant_id: TenantId::new("tenant").expect("tenant"),
+            span: SpanEventV1::new(
+                EventName::new("job.run").expect("name"),
+                EventTarget::new("worker").expect("target"),
+                trace_context(),
+                Some(SpanId::new([3u8; 8]).expect("parent span id")),
+                Timestamp::from_unix_nanos(1_000),
+                Timestamp::from_unix_nanos(2_000),
+                status,
+                attributes,
+            )
+            .expect("span"),
+        }
+    }
+
+    #[test]
+    fn emit_exports_exactly_one_span_preserving_trace_and_span_identity() {
+        let runtime = runtime();
+        let exporter = RecordingExporter::default();
+        let sink = OpenTelemetrySpanSink::new(exporter.clone(), runtime.handle().clone());
+        sink.emit(span_envelope(SpanStatus::Ok, BTreeMap::new()))
+            .expect("emit");
+
+        let batches = exporter.exported.lock().expect("exported");
+        assert_eq!(batches.len(), 1);
+        let batch = &batches[0];
+        assert_eq!(batch.len(), 1);
+        let span = &batch[0];
+        assert_eq!(
+            span.span_context.trace_id().to_bytes(),
+            [1u8; 16],
+            "the exported trace_id must be exactly the one this crate's own \
+             propagation logic determined, never minted by the exporter"
+        );
+        assert_eq!(span.span_context.span_id().to_bytes(), [2u8; 8]);
+        assert_eq!(span.parent_span_id.to_bytes(), [3u8; 8]);
+        assert_eq!(span.name, "job.run");
+        assert_eq!(span.status, opentelemetry::trace::Status::Ok);
+        assert_eq!(span.span_kind, opentelemetry::trace::SpanKind::Internal);
+        assert!(!span.parent_span_is_remote);
+        assert_eq!(span.dropped_attributes_count, 0);
+        assert!(span.events.is_empty());
+        assert!(span.links.is_empty());
+    }
+
+    #[test]
+    fn tenant_id_and_caller_attributes_are_never_exported() {
+        let runtime = runtime();
+        let exporter = RecordingExporter::default();
+        let sink = OpenTelemetrySpanSink::new(exporter.clone(), runtime.handle().clone());
+        sink.emit(span_envelope(
+            SpanStatus::Unset,
+            BTreeMap::from([("forged".to_owned(), "leaked".to_owned())]),
+        ))
+        .expect("emit");
+
+        let batches = exporter.exported.lock().expect("exported");
+        let span = &batches[0][0];
+        assert!(span.attributes.is_empty(), "attributes must never forward");
+        let encoded = format!("{span:?}");
+        for prohibited in ["tenant", "leaked", "forged"] {
+            assert!(!encoded.contains(prohibited), "export leaked {prohibited}");
+        }
+    }
+
+    #[test]
+    fn baggage_is_never_exported() {
+        let runtime = runtime();
+        let exporter = RecordingExporter::default();
+        let sink = OpenTelemetrySpanSink::new(exporter.clone(), runtime.handle().clone());
+        let context_with_baggage = TraceContextV1::new(
+            TraceId::new([1u8; 16]).expect("trace id"),
+            SpanId::new([2u8; 8]).expect("span id"),
+            TraceFlags::from_raw(0x01),
+            None,
+            BTreeMap::from([("secret".to_owned(), "smuggled".to_owned())]),
+        )
+        .expect("trace context with baggage");
+        let envelope = SpanEnvelopeV1 {
+            tenant_id: TenantId::new("tenant").expect("tenant"),
+            span: SpanEventV1::new(
+                EventName::new("job.run").expect("name"),
+                EventTarget::new("worker").expect("target"),
+                context_with_baggage,
+                None,
+                Timestamp::from_unix_nanos(1_000),
+                Timestamp::from_unix_nanos(2_000),
+                SpanStatus::Unset,
+                BTreeMap::new(),
+            )
+            .expect("span"),
+        };
+        sink.emit(envelope).expect("emit");
+
+        let batches = exporter.exported.lock().expect("exported");
+        let encoded = format!("{:?}", batches[0][0]);
+        assert!(!encoded.contains("smuggled"), "baggage must never export");
+    }
+
+    #[test]
+    fn every_span_status_maps_correctly() {
+        for (status, expected) in [
+            (SpanStatus::Unset, opentelemetry::trace::Status::Unset),
+            (SpanStatus::Ok, opentelemetry::trace::Status::Ok),
+        ] {
+            let runtime = runtime();
+            let exporter = RecordingExporter::default();
+            let sink = OpenTelemetrySpanSink::new(exporter.clone(), runtime.handle().clone());
+            sink.emit(span_envelope(status, BTreeMap::new()))
+                .expect("emit");
+            let batches = exporter.exported.lock().expect("exported");
+            assert_eq!(batches[0][0].status, expected);
+        }
+        let runtime = runtime();
+        let exporter = RecordingExporter::default();
+        let sink = OpenTelemetrySpanSink::new(exporter.clone(), runtime.handle().clone());
+        sink.emit(span_envelope(SpanStatus::Error, BTreeMap::new()))
+            .expect("emit");
+        let batches = exporter.exported.lock().expect("exported");
+        assert!(matches!(
+            batches[0][0].status,
+            opentelemetry::trace::Status::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn exporter_failure_is_reported_as_adapter_failure() {
+        let runtime = runtime();
+        let sink = OpenTelemetrySpanSink::new(FailingExporter, runtime.handle().clone());
+        assert_eq!(
+            sink.emit(span_envelope(SpanStatus::Unset, BTreeMap::new())),
+            Err(ObservabilityError::AdapterFailure)
+        );
+    }
+
+    #[test]
+    fn guarantees_are_all_false_except_may_block() {
+        let runtime = runtime();
+        let sink =
+            OpenTelemetrySpanSink::new(RecordingExporter::default(), runtime.handle().clone());
+        assert_eq!(
+            sink.guarantees(),
+            TelemetryGuarantees {
+                durable_across_restart: false,
+                visible_across_processes: false,
+                delivery_confirmed: false,
+                queryable: false,
+                may_block: true,
+            }
+        );
+    }
+
+    #[test]
+    fn emit_from_a_spawned_blocking_task_does_not_panic() {
+        let runtime = runtime();
+        let exporter = RecordingExporter::default();
+        let sink = Arc::new(OpenTelemetrySpanSink::new(
+            exporter.clone(),
+            runtime.handle().clone(),
+        ));
+        runtime.block_on(async {
+            let sink = Arc::clone(&sink);
+            tokio::task::spawn_blocking(move || {
+                sink.emit(span_envelope(SpanStatus::Unset, BTreeMap::new()))
+                    .expect("emit from a spawned blocking task must not panic");
+            })
+            .await
+            .expect("spawn_blocking task");
+        });
+        assert_eq!(exporter.exported.lock().expect("exported").len(), 1);
+    }
+
+    #[test]
+    fn emit_from_directly_within_an_async_runtime_worker_task_does_not_panic() {
+        // The actual adversarial condition block_in_place exists to guard
+        // against: emit() called from *directly inside* an async task body
+        // running on a runtime worker thread - not via spawn_blocking (which
+        // runs on Tokio's separate blocking-thread pool and carries no
+        // runtime-context guard, so it never exercises this path). A bare
+        // `handle.block_on(...)` called from here panics with "Cannot start
+        // a runtime from within a runtime"; block_in_place is what prevents
+        // that. This test fails (panics) if block_in_place is ever removed.
+        let runtime = runtime();
+        let exporter = RecordingExporter::default();
+        let sink = Arc::new(OpenTelemetrySpanSink::new(
+            exporter.clone(),
+            runtime.handle().clone(),
+        ));
+        runtime.block_on(async {
+            // No spawn_blocking here: this closure body runs directly on a
+            // scheduler worker thread while executing async work.
+            let sink = Arc::clone(&sink);
+            tokio::task::yield_now().await;
+            sink.emit(span_envelope(SpanStatus::Unset, BTreeMap::new()))
+                .expect("emit from directly within an async worker task must not panic");
+        });
+        assert_eq!(exporter.exported.lock().expect("exported").len(), 1);
+    }
+}

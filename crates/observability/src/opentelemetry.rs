@@ -225,6 +225,157 @@ enum InstrumentHandle {
     Histogram(Histogram<f64>),
 }
 
+// --- Span export adapter ---
+
+/// [`SpanSink`] backed by an injected `opentelemetry_sdk::trace::SpanExporter`.
+///
+/// This adapter receives an already-constructed exporter only. It SHALL NOT
+/// construct an SDK, `TracerProvider`, `BatchSpanProcessor`, network client,
+/// or shutdown hook; those belong to a composition binary, matching
+/// [`OpenTelemetryLogsSink`]'s and [`OpenTelemetryMetricSink`]'s existing
+/// rule. Depending on `opentelemetry_sdk::trace::SpanExporter` as a trait
+/// bound on a generic, caller-injected type is not the same as constructing
+/// an SDK: this adapter never builds a `TracerProvider` or batch processor,
+/// it only calls `export` on an exporter instance the composition root
+/// already built.
+///
+/// `SpanEventV1`'s `trace_id`/`span_id` are already fully determined by this
+/// crate's own domain/propagation logic (see [`crate::TraceContextV1`]);
+/// unlike `opentelemetry::trace::Tracer::build_with_context`, which mints its
+/// own span identity and cannot accept a caller-chosen one,
+/// `opentelemetry_sdk::trace::SpanData`/`SpanContext::new` let this adapter
+/// construct the exported record directly, preserving that identity exactly.
+///
+/// `SpanSink::emit` stays synchronous per this crate's core contract, but
+/// `SpanExporter::export` is `async fn`. This adapter bridges the two
+/// internally via [`tokio::task::block_in_place`] plus
+/// `Handle::block_on` on an explicitly injected [`tokio::runtime::Handle`]
+/// (never `Handle::current()` implicitly): a bare `Handle::block_on` alone
+/// would panic if `emit` is ever called from a thread that is itself a
+/// Tokio runtime worker ("Cannot start a runtime from within a runtime");
+/// `block_in_place` moves the current task off the worker first, avoiding
+/// that panic. This means the adapter requires a `rt-multi-thread` runtime;
+/// it SHALL NOT be used under a `current_thread` runtime, and `emit` will
+/// panic if the injected handle belongs to one. `guarantees()` reports
+/// `may_block: true`: this adapter genuinely blocks the calling thread for
+/// the duration of `export`, and (unlike the log/metric adapters, which
+/// merely cannot observe an injected primitive's I/O) here this adapter is
+/// itself the source of that blocking.
+///
+/// Exports exactly one span per `emit` call (`export(vec![span_data])`);
+/// it performs no internal buffering or batching. A `BatchSpanProcessor` is
+/// still something this brick SHALL NOT construct.
+///
+/// Egress excludes `tenant_id` and `SpanEventV1.attributes`, matching the
+/// log/metric adapters' data-minimization boundary (no type-level trust
+/// distinction between attribute maps). `TraceContextV1.baggage` is never
+/// exported, per the permanent baggage-exclusion rule. `trace_state` is
+/// forwarded on a best-effort basis: this crate validates only its byte
+/// length and control-byte safety, not the W3C `tracestate` list-member
+/// grammar `opentelemetry::trace::TraceState`'s parser enforces, so a value
+/// that fails to parse there is forwarded as an empty `TraceState` rather
+/// than failing the whole `emit` — `trace_state` is optional presentational
+/// metadata, not an identity-bearing field like `trace_id`/`span_id`.
+pub struct OpenTelemetrySpanSink<E> {
+    exporter: E,
+    runtime: tokio::runtime::Handle,
+}
+impl<E> OpenTelemetrySpanSink<E> {
+    #[must_use]
+    pub const fn new(exporter: E, runtime: tokio::runtime::Handle) -> Self {
+        Self { exporter, runtime }
+    }
+}
+impl<E> crate::SpanSink for OpenTelemetrySpanSink<E>
+where
+    E: opentelemetry_sdk::trace::SpanExporter,
+{
+    fn emit(&self, envelope: crate::SpanEnvelopeV1) -> Result<(), ObservabilityError> {
+        validate_tenant_id(envelope.tenant_id.as_str())?;
+        crate::validate_span(&envelope.span)?;
+        let span_data = span_data(&envelope.span);
+        let runtime = self.runtime.clone();
+        let outcome = tokio::task::block_in_place(move || {
+            runtime.block_on(self.exporter.export(vec![span_data]))
+        });
+        outcome.map_err(|_| ObservabilityError::AdapterFailure)
+    }
+
+    fn guarantees(&self) -> TelemetryGuarantees {
+        TelemetryGuarantees {
+            durable_across_restart: false,
+            visible_across_processes: false,
+            delivery_confirmed: false,
+            queryable: false,
+            // This adapter itself performs the blocking (bridging emit's
+            // synchronous contract to the injected exporter's async
+            // export()), not merely an injected primitive whose behavior
+            // is unobservable - either way, may_block: true is the
+            // truthful value.
+            may_block: true,
+        }
+    }
+}
+
+fn span_data(span: &crate::SpanEventV1) -> opentelemetry_sdk::trace::SpanData {
+    let context = otel_span_context(&span.context);
+    let parent_span_id = span
+        .parent_span_id
+        .map_or(opentelemetry::trace::SpanId::INVALID, |id| {
+            opentelemetry::trace::SpanId::from_bytes(*id.as_bytes())
+        });
+    opentelemetry_sdk::trace::SpanData {
+        span_context: context,
+        parent_span_id,
+        // No equivalent on SpanEventV1/TraceContextV1: asserting `true` with
+        // no evidence would be an unverified optimistic claim, the same
+        // class the "truthful, not aspirational" TelemetryGuarantees rule
+        // forbids for may_block.
+        parent_span_is_remote: false,
+        span_kind: opentelemetry::trace::SpanKind::Internal,
+        name: span.name.as_str().to_owned().into(),
+        start_time: unix_nanos_to_system_time(span.start),
+        end_time: unix_nanos_to_system_time(span.end),
+        // tenant_id and attributes are excluded (data-minimization, matches
+        // the log/metric adapters); nothing here is dropped as a result of
+        // any limit, since validate_span already ran above.
+        attributes: Vec::new(),
+        dropped_attributes_count: 0,
+        events: opentelemetry_sdk::trace::SpanEvents::default(),
+        links: opentelemetry_sdk::trace::SpanLinks::default(),
+        status: otel_status(span.status),
+        instrumentation_scope: opentelemetry::InstrumentationScope::builder(EVENT_TARGET)
+            .with_version(env!("CARGO_PKG_VERSION"))
+            .build(),
+    }
+}
+
+fn otel_span_context(context: &crate::TraceContextV1) -> opentelemetry::trace::SpanContext {
+    let trace_id = opentelemetry::trace::TraceId::from_bytes(*context.trace_id.as_bytes());
+    let span_id = opentelemetry::trace::SpanId::from_bytes(*context.span_id.as_bytes());
+    let trace_flags = opentelemetry::trace::TraceFlags::new(context.trace_flags.as_raw());
+    let trace_state = context
+        .trace_state
+        .as_deref()
+        .and_then(|state| state.parse().ok())
+        .unwrap_or_default();
+    opentelemetry::trace::SpanContext::new(trace_id, span_id, trace_flags, false, trace_state)
+}
+
+fn otel_status(status: crate::SpanStatus) -> opentelemetry::trace::Status {
+    match status {
+        crate::SpanStatus::Unset => opentelemetry::trace::Status::Unset,
+        crate::SpanStatus::Ok => opentelemetry::trace::Status::Ok,
+        crate::SpanStatus::Error => opentelemetry::trace::Status::error(""),
+    }
+}
+
+fn unix_nanos_to_system_time(timestamp: crate::Timestamp) -> std::time::SystemTime {
+    UNIX_EPOCH
+        .checked_add(Duration::from_nanos(timestamp.as_unix_nanos()))
+        .unwrap_or(UNIX_EPOCH)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
