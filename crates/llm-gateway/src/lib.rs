@@ -20,6 +20,8 @@ mod port;
 mod service;
 #[cfg(feature = "static")]
 pub mod r#static;
+#[cfg(feature = "tokio_cancellation")]
+pub mod tokio_cancellation;
 mod validation;
 
 pub use error::LlmError;
@@ -29,8 +31,9 @@ pub use model::{
     ProviderRequestId, TokenUsage, ToolCall, ToolDefinition, ToolName,
 };
 pub use port::{
-    CancellationFuture, CancellationSignal, DeadlineFactory, DeadlineFuture, DeadlineSignal,
-    InvocationControl, LlmProvider, ProviderFuture,
+    CancellationFuture, CancellationHandle, CancellationSignal, CancellationSignalFactory,
+    DeadlineFactory, DeadlineFuture, DeadlineSignal, InvocationControl, LlmProvider,
+    ProviderFuture,
 };
 pub use validation::{
     MAX_IDENTIFIER_BYTES, MAX_JSON_OBJECT_BYTES, MAX_OUTPUT_TOKENS, MAX_PROMPT_BYTES,
