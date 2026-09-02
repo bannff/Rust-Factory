@@ -8,6 +8,20 @@ pub(crate) enum InvocationOutcome<T> {
     DeadlineExceeded,
 }
 
+/// `biased;` forces top-to-bottom evaluation in written order and stops at
+/// the first branch that is `Ready`, matching the fixed-priority
+/// cancellation -> deadline -> provider cascade this replaced (a hand-rolled
+/// `poll_fn` with the identical short-circuit order). Without `biased;`,
+/// `tokio::select!` checks branches in a random order for fairness, which
+/// would silently drop cancellation's priority over an already-ready
+/// provider result.
+///
+/// Once one branch resolves, `select!` drops every other branch's future
+/// (same as the replaced `poll_fn` closure's pinned futures being dropped
+/// when the outer future resolves). In particular, a `Cancelled` or
+/// `DeadlineExceeded` outcome drops the in-flight `provider` future: the
+/// caller relies on this to actually stop the underlying request, not just
+/// to stop *awaiting* it.
 pub(crate) async fn race_invocation<P, C, D, T>(
     provider: P,
     cancellation: C,
@@ -18,23 +32,12 @@ where
     C: Future<Output = ()>,
     D: Future<Output = ()>,
 {
-    let mut provider = std::pin::pin!(provider);
-    let mut cancellation = std::pin::pin!(cancellation);
-    let mut deadline = std::pin::pin!(deadline);
-
-    std::future::poll_fn(move |context| {
-        if cancellation.as_mut().poll(context).is_ready() {
-            return std::task::Poll::Ready(InvocationOutcome::Cancelled);
-        }
-        if deadline.as_mut().poll(context).is_ready() {
-            return std::task::Poll::Ready(InvocationOutcome::DeadlineExceeded);
-        }
-        provider
-            .as_mut()
-            .poll(context)
-            .map(InvocationOutcome::Provider)
-    })
-    .await
+    tokio::select! {
+        biased;
+        () = cancellation => InvocationOutcome::Cancelled,
+        () = deadline => InvocationOutcome::DeadlineExceeded,
+        result = provider => InvocationOutcome::Provider(result),
+    }
 }
 
 #[cfg(test)]
@@ -129,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn all_pending_futures_are_polled_once_per_race_poll() {
+    fn no_branch_short_circuits_when_every_future_is_pending() {
         let (provider, provider_polls) = counted(None::<()>);
         let (cancellation, cancellation_polls) = counted(None::<()>);
         let (deadline, deadline_polls) = counted(None::<()>);
