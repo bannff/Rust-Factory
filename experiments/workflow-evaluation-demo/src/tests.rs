@@ -137,6 +137,7 @@ fn completed_workflow() -> (InMemoryWorkflowStore, workflow::RunSummary) {
         StaticWorkflowCatalog::new([definition]),
         static_invoker(),
         Box::new(NeverDeadlineFactory),
+        Box::new(llm_gateway::tokio_cancellation::TokioCancellationSignalFactory),
     );
     let summary = poll_immediate(runner.start(
         request_context(TENANT),

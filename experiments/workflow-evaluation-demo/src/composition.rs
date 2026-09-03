@@ -151,6 +151,7 @@ impl Composition {
             StaticWorkflowCatalog::new([definition]),
             invoker,
             Box::new(ProjectDeadlineFactory),
+            Box::new(llm_gateway::tokio_cancellation::TokioCancellationSignalFactory),
         );
 
         let evaluation = EvaluationService::new(

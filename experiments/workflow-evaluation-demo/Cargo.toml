@@ -10,7 +10,7 @@ publish = false
 agent = { version = "=0.1.0", path = "../../crates/agent", default-features = false }
 evaluation = { version = "=0.1.0", path = "../../crates/evaluation", default-features = false, features = ["local", "memory"] }
 knowledge = { version = "=0.1.0", path = "../../crates/knowledge", default-features = false, features = ["static"] }
-llm-gateway = { version = "=0.1.0", path = "../../crates/llm-gateway", default-features = false, features = ["static"] }
+llm-gateway = { version = "=0.1.0", path = "../../crates/llm-gateway", default-features = false, features = ["static", "tokio_cancellation"] }
 mcp-transport = { version = "=0.1.0", path = "../../crates/mcp-transport", default-features = false }
 observability = { version = "=0.1.0", path = "../../crates/observability", default-features = false, features = ["local"] }
 rmcp = { version = "=3.1.4", default-features = false, features = ["macros", "server"] }
