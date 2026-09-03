@@ -69,6 +69,7 @@ VALID_ROLES = {
 ADAPTER_MODULES = {
     "rmcp": frozenset({"mcp"}),
     "mcp_transport": frozenset({"mcp"}),
+    "mcp_contract": frozenset({"mcp"}),
     "schemars": frozenset({"mcp", "settings"}),
     "anyhow": frozenset({"mcp"}),
     "cap_std": frozenset({"fs"}),
